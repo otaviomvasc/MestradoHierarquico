@@ -13,7 +13,7 @@ struct Domains
     dominio_n3::Dict{Int64, Vector{Int64}}
 end
 
-struct HealthcareData
+mutable struct HealthcareData
     df_demanda::DataFrame
     df_ins_prim::DataFrame
     df_ins_sec::DataFrame
@@ -25,7 +25,7 @@ struct HealthcareData
     df_necessidades_sec_ter::DataFrame
 end
 
-struct ModelConstants
+mutable struct ModelConstants
     # Raios máximos
     raio_maximo_n1::Float64
     raio_maximo_n2::Float64
