@@ -7,11 +7,20 @@ struct Matriz_Dist
     Matriz_Dist_n3::Matrix{Float64}
 end
 
-struct Domains
+mutable struct Domains
     dominio_n1::Dict{Int64, Vector{Int64}}
     dominio_n2::Dict{Int64, Vector{Int64}}
     dominio_n3::Dict{Int64, Vector{Int64}}
+    dominio_rest_cap_n1::Vector{Int64}
+    dominio_rest_cap_n2::Vector{Int64}
+    dominio_rest_cap_n3::Vector{Int64}
+    dominio_level_n2::Vector{Int64}
+    dominio_level_n3::Vector{Int64}
+    dominio_fixa_inst_reais_n1::Vector{Int64}
+    dominio_fixa_inst_reais_n2::Vector{Int64}
+    dominio_fixa_inst_reais_n3::Vector{Int64}
 end
+
 
 mutable struct HealthcareData
     df_demanda::DataFrame
@@ -63,7 +72,8 @@ end
 mutable struct MunicipalityData
     nome::String # CD_SETOR => demanda
     S_Valor_Demanda::Vector{Float64}
-    coordenadas::Vector{Tuple{Float64, Float64}}  # CD_SETOR => (lat, lon)
+    coordenadas::Vector{Tuple{Float64, Float64}}
+    S_cnes_primario_referencia_real::Vector{Int64}
     unidades_n1::DataFrame
     unidades_n2::DataFrame
     unidades_n3::DataFrame
@@ -71,9 +81,10 @@ mutable struct MunicipalityData
     equipes_n2::DataFrame
     equipes_n3::DataFrame
     constantes::ModelConstants
+    
 end
 
-struct ModelIndices
+mutable struct ModelIndices
     S_n1::Vector{Int}
     S_n2::Vector{Int}
     S_n3::Vector{Int}
@@ -87,9 +98,10 @@ struct ModelIndices
     S_instalacoes_reais_n1::Vector{Int}
     S_instalacoes_reais_n2::Vector{Int}
     S_instalacoes_reais_n3::Vector{Int}
+    S_atribuicoes_reais_por_demanda::Vector{Int}
 end
 
-struct ModelParameters
+mutable struct ModelParameters
     capacidade_maxima_por_equipe_n1::Vector{Float64}
     S_custo_equipe_n1::Vector{Float64}
     S_eq_por_paciente_n2::Vector{Float64}
@@ -128,7 +140,7 @@ function filter_municipality_data(data::HealthcareData, municipio::String)::Muni
     # Criar dicionários usando eachrow
     S_Valor_Demanda = [row["Total de pessoas"] for row in eachrow(df_m)]
     c_coords = [(row.Latitude, row.Longitude) for row in eachrow(df_m)]
-
+    S_cnes_primario_referencia_real = [row["UBS_ref"] for row in eachrow(df_m)]
     # Quando coletar valores de demanda
 
     # Definição das constantes do modelo - Dados que precisamos melhorar!.
@@ -171,6 +183,7 @@ function filter_municipality_data(data::HealthcareData, municipio::String)::Muni
         municipio,
         S_Valor_Demanda,
         c_coords,
+        S_cnes_primario_referencia_real,
         data.df_ins_prim[data.df_ins_prim.municipio_nome .== muncipio_upper, :],
         data.df_ins_sec[data.df_ins_sec.municipio_nome .== muncipio_upper, :],
         data.df_ins_ter[data.df_ins_ter.municipio_nome .== muncipio_upper, :],

@@ -14,11 +14,14 @@ function create_model_indices(mun_data::MunicipalityData)::ModelIndices
     S_locais_candidatos_n1 = collect((qntd_n1_real + 1):(qntd_pontos_demanda + qntd_n1_real))
     S_locais_candidatos_n2 = collect((qntd_n2_real + 1):(qntd_pontos_demanda + qntd_n2_real))
     S_locais_candidatos_n3 = collect((qntd_n3_real + 1):(qntd_pontos_demanda + qntd_n3_real))
+
+    #Definicao de qual indice atende qual ponto de demanda!
+    S_atribuicoes_reais_por_demanda  = find_cnes_line_numbers(mun_data.unidades_n1, mun_data.S_cnes_primario_referencia_real)
     
     # Criar conjuntos finais
     S_n1 = vcat(S_instalacoes_reais_n1, S_locais_candidatos_n1)
-    S_n2 = S_instalacoes_reais_n2 #vcat(S_instalacoes_reais_n2#, S_locais_candidatos_n2)
-    S_n3 = S_instalacoes_reais_n3 #vcat(S_instalacoes_reais_n3, S_locais_candidatos_n3)
+    S_n2 = vcat(S_instalacoes_reais_n2, S_locais_candidatos_n2)
+    S_n3 = vcat(S_instalacoes_reais_n3, S_locais_candidatos_n3)
     
     # Criar conjuntos de equipes
     #TOOD: Salvar esse dado tambem!
@@ -46,7 +49,8 @@ function create_model_indices(mun_data::MunicipalityData)::ModelIndices
         S_locais_candidatos_n3,
         S_instalacoes_reais_n1,
         S_instalacoes_reais_n2,
-        S_instalacoes_reais_n3
+        S_instalacoes_reais_n3, 
+        S_atribuicoes_reais_por_demanda
     )
 end
 
@@ -154,14 +158,15 @@ function calculate_distance_matrices(mun_data::MunicipalityData, indices::ModelI
     
 
     Matriz_Dist_n1 = [vincenty_distance(c1, c2) for c1 in coords_demanda, c2 in coords_n1]
-    Matriz_Dist_n2 = [vincenty_distance(c1, c2) for c1 in coords_n1, c2 in coords_unidades_reais_n2]
-    Matriz_Dist_n3 = [vincenty_distance(c1, c2) for c1 in coords_unidades_reais_n2, c2 in coords_unidades_reais_n3]
+    Matriz_Dist_n2 = [vincenty_distance(c1, c2) for c1 in coords_n1, c2 in coords_n2]
+    Matriz_Dist_n3 = [vincenty_distance(c1, c2) for c1 in coords_n2, c2 in coords_n3]
     
     
     return Matriz_Dist(Matriz_Dist_n1, 
                       Matriz_Dist_n2, 
                       Matriz_Dist_n3)
 end
+
 
 function calculate_equipment_capacity_matrix(unidades::DataFrame, equipes::DataFrame, lista_equipes::Vector{String})::Matrix{Float64}
     qntd_equipes = length(lista_equipes)
@@ -184,6 +189,7 @@ function calculate_equipment_capacity_matrix(unidades::DataFrame, equipes::DataF
     
     return capacidade_matrix
 end
+
 
 function calculate_team_parameters(lista_equipes::Vector{String}, df_necessidades::DataFrame)::Tuple{Vector{Float64}, Vector{Float64}}
     # Valores padrão para especialidades não encontradas
@@ -214,6 +220,7 @@ function calculate_team_parameters(lista_equipes::Vector{String}, df_necessidade
     
     return capacidades, custos
 end
+
 
 function calculate_equipment_parameters(mun_data::MunicipalityData, data::HealthcareData)::Tuple{
         Vector{Float64}, Vector{Float64},  # capacidade_n1, custo_n1
@@ -264,8 +271,19 @@ function calculate_equipment_parameters(mun_data::MunicipalityData, data::Health
            matriz_cap_n1, matriz_cap_n2, matriz_cap_n3
 end
 
-function calculate_domains(mun_data::MunicipalityData, data::HealthcareData, S_Matriz_Dist::Matriz_Dist, indices::ModelIndices)::Domains
-    # Constantes de distância máxima
+
+function calculate_domains_capacity_constrant(indices::ModelIndices)::Tuple{Vector{Int64},Vector{Int64}, Vector{Int64}}
+    S_dominio_cap_n1 = indices.S_n1
+    S_dominio_cap_n2 = indices.S_n2
+    S_dominio_cap_n3 = indices.S_n3
+
+    return (S_dominio_cap_n1, S_dominio_cap_n2, S_dominio_cap_n3)
+end
+
+
+
+function calculate_flow_patients_domain(mun_data::MunicipalityData, data::HealthcareData, S_Matriz_Dist::Matriz_Dist, indices::ModelIndices)
+
     Dist_Maxima_Demanda_N1 = mun_data.constantes.raio_maximo_n1
     Dist_Maxima_n1_n2 = mun_data.constantes.raio_maximo_n2
     Dist_Maxima_n2_n3 = mun_data.constantes.raio_maximo_n3
@@ -281,14 +299,55 @@ function calculate_domains(mun_data::MunicipalityData, data::HealthcareData, S_M
                          for d in indices.S_n2)
     
                             
-    return Domains(dominio_atr_n1, dominio_atr_n2, dominio_atr_n3)
+    return dominio_atr_n1, dominio_atr_n2, dominio_atr_n3
+
+end
+
+
+function calculate_domains_second_and_third_level(indices::ModelIndices)::Tuple{Vector{Int64}, Vector{Int64}}
+    S_dominio_level_n2 = indices.S_n2
+    S_dominio_level_n3 = indices.S_n3
+
+    return (S_dominio_level_n2, S_dominio_level_n3)
+
+end
+
+
+function calculate_domain_fix_instalacoes_reais(indices::ModelIndices)::Tuple{Vector{Int64},Vector{Int64}, Vector{Int64}}
+    dominio_fixa_inst_reais_n1 = indices.S_instalacoes_reais_n1
+    dominio_fixa_inst_reais_n2 = indices.S_instalacoes_reais_n2
+    dominio_fixa_inst_reais_n3 = indices.S_instalacoes_reais_n3
+
+    return (dominio_fixa_inst_reais_n1, dominio_fixa_inst_reais_n2, dominio_fixa_inst_reais_n3)
+end
+
+
+function calculate_domains(mun_data::MunicipalityData, data::HealthcareData, S_Matriz_Dist::Matriz_Dist, indices::ModelIndices)::Domains
+    # Constantes de distância máxima
+    dominio_atr_n1, dominio_atr_n2, dominio_atr_n3 = calculate_flow_patients_domain(mun_data::MunicipalityData, data::HealthcareData, S_Matriz_Dist::Matriz_Dist, indices::ModelIndices)
+    S_dominio_cap_n1, S_dominio_cap_n2, S_dominio_cap_n3 = calculate_domains_capacity_constrant(indices::ModelIndices)
+    S_dominio_level_n2, S_dominio_level_n3 = calculate_domains_second_and_third_level(indices::ModelIndices)
+    dominio_fixa_inst_reais_n1, dominio_fixa_inst_reais_n2, dominio_fixa_inst_reais_n3 = calculate_domain_fix_instalacoes_reais(indices::ModelIndices)
+
+    return Domains(dominio_atr_n1, 
+                  dominio_atr_n2, 
+                  dominio_atr_n3, 
+                  S_dominio_cap_n1, 
+                  S_dominio_cap_n2, 
+                  S_dominio_cap_n3,
+                  S_dominio_level_n2,
+                  S_dominio_level_n3,
+                  dominio_fixa_inst_reais_n1,
+                  dominio_fixa_inst_reais_n2,
+                  dominio_fixa_inst_reais_n3,
+                  )
+
 end
 
 
 function create_model_parameters(mun_data::MunicipalityData, data::HealthcareData, indices::ModelIndices)::ModelParameters
     # Calcular matrizes de distância
     S_Matriz_Dist = calculate_distance_matrices(mun_data, indices)
-
     dominios_model = calculate_domains(mun_data, data, S_Matriz_Dist, indices)
     # Calcular parâmetros das equipes
     capacidade_n1, custo_n1, 
@@ -296,6 +355,7 @@ function create_model_parameters(mun_data::MunicipalityData, data::HealthcareDat
     capacidade_n3, custo_n3,
     matriz_cap_n1, matriz_cap_n2, matriz_cap_n3 = calculate_equipment_parameters(mun_data, data)
     
+
     return ModelParameters(
         capacidade_n1,
         custo_n1,
@@ -309,4 +369,24 @@ function create_model_parameters(mun_data::MunicipalityData, data::HealthcareDat
         S_Matriz_Dist,
         dominios_model
     )
+end
+
+
+function find_cnes_line_numbers(df_und::DataFrame, S_cnes::Vector{Int64})::Vector{Int64}
+    # Create a vector to store the line numbers
+    line_numbers = Int64[]
+    #(mun_data.unidades_n1, mun_data.S_cnes_primario_referencia_real 
+    #S_cnes = mun_data.S_cnes_primario_referencia_real
+
+    for cnes in S_cnes
+        # Find the first occurrence of this CNES in unidades_n1.cnes
+        line_number = findfirst(x -> x == cnes, df_und.cnes)
+        if line_number !== nothing
+            push!(line_numbers, line_number)
+        else
+            push!(line_numbers, -1)  # -1 indicates CNES not found
+        end
+    end
+    
+    return line_numbers
 end 

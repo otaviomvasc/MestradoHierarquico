@@ -389,7 +389,7 @@ end
 
 function generate_all_visualizations()
     println("Carregando resultados...")
-    path = "resultados_otimizacao_Contagem_End.jld2"
+    path = "resultados_otimizacao_builder_v1.jld2"
     results, parameters, mun_data, indices = load_saved_results(path)
     
 

@@ -14,7 +14,7 @@ include("healthcare_model.jl")
 include("model_utils.jl")
 include("optimization_model.jl")
 
-function main()
+function main(version_result)
     # Configurar logging
     println("Iniciando otimização do sistema de saúde")
     
@@ -31,6 +31,7 @@ function main()
         println("Filtrando dados para o município: $municipio")
         mun_data = filter_municipality_data(data, municipio)
         
+        mun_data.constantes.raio_maximo_n1 = 2
         # Calcular parâmetros do modelo
         println("Calculando parâmetros do modelo...")
         indices, parameters = calculate_model_parameters(mun_data, data)
@@ -49,7 +50,7 @@ function main()
 
         # Salvar resultados e dados para pós-processamento
         println("Salvando resultados e dados...")
-        save("resultados_otimizacao_Contagem_End.jld2", Dict(
+        save("resultados_otimizacao_$(version_result).jld2", Dict(
             "results" => results,
             "parameters" => parameters,
             "mun_data" => mun_data,
