@@ -1,4 +1,6 @@
 using JuMP, HiGHS, JLD2
+using Base: deepcopy
+
 include("healthcare_model.jl")
 include("model_utils.jl")
 include("model_builder.jl")
@@ -28,15 +30,15 @@ function example_usage()
     # Criar modelo usando o builder
     println("Criando modelo usando o builder...")
 
-    builder_oficial = CreateHealthcareModelBuilder(parameters, indices, mun_data) |>
+    builder_oficial = CreateHealthcareModelBuilder(deepcopy(parameters), deepcopy(indices), deepcopy(mun_data)) |>
     #without_second_level |>
     #without_third_level |>
     # fixa_alocacoes_primarias_reais 
-    #without_candidates_first_level |>
+    without_candidates_first_level |>
     without_candidates_second_level |>
     without_candidates_third_level |>
 
-    without_fix_real_facilities_n1 |>
+    #without_fix_real_facilities_n1 |>
     #without_fix_real_facilities_n2 |>
     #without_fix_real_facilities_n3 |>
 
@@ -47,7 +49,23 @@ function example_usage()
     println("Resolvendo modelo...")
     optimize!(builder_oficial.model)
 
-    builder_alocacoes_n1_fixadas = CreateHealthcareModelBuilder(parameters, indices, mun_data) |>
+
+
+    results = extract_results(builder_oficial.model, builder_oficial.indices)
+    version_result = "builder_sem_candidatos_n1"
+    println("Salvando resultados e dados...")
+    save("resultados_otimizacao_$(version_result).jld2", Dict(
+        "results" => results,
+        "parameters" => parameters,
+        "mun_data" => mun_data,
+        "indices" => indices
+    ))
+
+    
+
+
+
+    builder_alocacoes_n1_fixadas = CreateHealthcareModelBuilder(deepcopy(parameters), deepcopy(indices), deepcopy(mun_data)) |>
     #without_second_level |>
     #without_third_level |>
     fixa_alocacoes_primarias_reais |>

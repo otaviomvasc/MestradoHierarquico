@@ -1,4 +1,5 @@
 using JuMP, HiGHS
+using Base: deepcopy
 
 mutable struct HealthcareModelBuilder
     model::Union{Nothing, Model}
@@ -10,8 +11,8 @@ mutable struct HealthcareModelBuilder
 end
 
 # Define o construtor externo (função) para criar a instância
-function CreateHealthcareModelBuilder( parameters::ModelParameters, indices::ModelIndices, mun_data::MunicipalityData)
-    builder = HealthcareModelBuilder(nothing, indices, parameters, mun_data, Dict{Symbol, Bool}(), Dict{Symbol, Any}())
+function CreateHealthcareModelBuilder(parameters::ModelParameters, indices::ModelIndices, mun_data::MunicipalityData)
+    builder = HealthcareModelBuilder(nothing, deepcopy(indices), deepcopy(parameters), deepcopy(mun_data), Dict{Symbol, Bool}(), Dict{Symbol, Any}())
     return builder
 end
 
@@ -33,110 +34,128 @@ end
 
 
 function without_candidates_first_level(builder::HealthcareModelBuilder)
-    builder.indices.S_n1 = builder.indices.S_instalacoes_reais_n1
-    builder.indices.S_Locais_Candidatos_n1 = Vector{Int}()
-    builder.parameters.S_domains.dominio_n1 = Dict(
-            k => [i for i in builder.parameters.S_domains.dominio_n1[k] if i in builder.indices.S_n1] 
-            for k in builder.parameters.S_domains.dominio_n1)
-    return builder
+    new_builder = deepcopy(builder)
+    #new_builder = builder_oficial
+    new_builder.indices.S_n1 = new_builder.indices.S_instalacoes_reais_n1
+    new_builder.indices.S_Locais_Candidatos_n1 = Vector{Int}()
+    new_builder.parameters.S_domains.dominio_n1 = Dict(
+            k => [i for i in new_builder.parameters.S_domains.dominio_n1[k] if i in new_builder.indices.S_n1] 
+            for k in new_builder.indices.S_Pontos_Demanda)
+
+    new_builder.parameters.S_domains.dominio_n1 = Dict(
+                    k => length(new_builder.parameters.S_domains.dominio_n1[k]) > 0 ? 
+                        new_builder.parameters.S_domains.dominio_n1[k] : 
+                        [k]
+                    for k in keys(new_builder.parameters.S_domains.dominio_n1)
+                )
+
+    return new_builder
 end
 
 
 function without_candidates_second_level(builder::HealthcareModelBuilder)
-    builder.indices.S_n2 = builder.indices.S_instalacoes_reais_n2
-    builder.indices.S_Locais_Candidatos_n2 = Vector{Int}()
-    builder.parameters.S_domains.dominio_n2 = Dict(
-        k => [i for i in builder.parameters.S_domains.dominio_n2[k] if i in builder.indices.S_n2]
-        for k in keys(builder.parameters.S_domains.dominio_n2)
+    new_builder = deepcopy(builder)
+    new_builder.indices.S_n2 = new_builder.indices.S_instalacoes_reais_n2
+    new_builder.indices.S_Locais_Candidatos_n2 = Vector{Int}()
+    new_builder.parameters.S_domains.dominio_n2 = Dict(
+        k => [i for i in new_builder.parameters.S_domains.dominio_n2[k] if i in new_builder.indices.S_n2]
+        for k in keys(new_builder.parameters.S_domains.dominio_n2)
     )
+
+
     
-    return builder
+    return new_builder
 end
 
 
 function without_candidates_third_level(builder::HealthcareModelBuilder)
-    builder.indices.S_n3 = builder.indices.S_instalacoes_reais_n3
-    builder.indices.S_Locais_Candidatos_n3 = Vector{Int}()
-    builder.parameters.S_domains.dominio_n3 = Dict(
-        k => [i for i in builder.parameters.S_domains.dominio_n3[k] if i in builder.indices.S_n3]
-        for k in keys(builder.parameters.S_domains.dominio_n3)
+    new_builder = deepcopy(builder)
+    new_builder.indices.S_n3 = new_builder.indices.S_instalacoes_reais_n3
+    new_builder.indices.S_Locais_Candidatos_n3 = Vector{Int}()
+    new_builder.parameters.S_domains.dominio_n3 = Dict(
+        k => [i for i in new_builder.parameters.S_domains.dominio_n3[k] if i in new_builder.indices.S_n3]
+        for k in keys(new_builder.parameters.S_domains.dominio_n3)
     )
     
-    return builder
+    return new_builder
 end
 
 
 function without_capacity_constraint_first_level(builder::HealthcareModelBuilder)
-    builder.parameters.S_domains.dominio_rest_cap_n1 = Vector{Int}()
-    return builder
+    new_builder = deepcopy(builder)
+    new_builder.parameters.S_domains.dominio_rest_cap_n1 = Vector{Int}()
+    return new_builder
 end
 
 
 function without_capacity_constraint_second_level(builder::HealthcareModelBuilder)
-    builder.parameters.S_domains.dominio_rest_cap_n2 = Vector{Int}()
-    return builder
+    new_builder = deepcopy(builder)
+    new_builder.parameters.S_domains.dominio_rest_cap_n2 = Vector{Int}()
+    return new_builder
 end
 
 
 function without_capacity_constraint_third_level(builder::HealthcareModelBuilder)
-    builder.parameters.S_domains.dominio_rest_cap_n3 = Vector{Int}()
-    return builder
+    new_builder = deepcopy(builder)
+    new_builder.parameters.S_domains.dominio_rest_cap_n3 = Vector{Int}()
+    return new_builder
 end
 
 
 function without_second_level(builder::HealthcareModelBuilder)
-
-    builder.indices.S_n2 = Vector{Int}()
-    builder.parameters.S_domains.dominio_level_n2 = Vector{Int}() #TODO: Converter para boolean
-    builder.indices.S_Locais_Candidatos_n2 = Vector{Int}()
-    builder.indices.S_instalacoes_reais_n2 = Vector{Int}()
-    builder.indices.S_equipes_n2 = Vector{Int}()
-    builder = without_fix_real_facilities_n2(builder)
-    builder = without_candidates_second_level(builder)
-    builder = without_capacity_constraint_second_level(builder)
-    return builder
+    new_builder = deepcopy(builder)
+    new_builder.indices.S_n2 = Vector{Int}()
+    new_builder.parameters.S_domains.dominio_level_n2 = Vector{Int}() #TODO: Converter para boolean
+    new_builder.indices.S_Locais_Candidatos_n2 = Vector{Int}()
+    new_builder.indices.S_instalacoes_reais_n2 = Vector{Int}()
+    new_builder.indices.S_equipes_n2 = Vector{Int}()
+    new_builder = without_fix_real_facilities_n2(new_builder)
+    new_builder = without_candidates_second_level(new_builder)
+    new_builder = without_capacity_constraint_second_level(new_builder)
+    return new_builder
 end
 
 
 function without_third_level(builder::HealthcareModelBuilder)
-    
-    builder.indices.S_n3 = Vector{Int}()
-    builder.parameters.S_domains.dominio_level_n3 = Vector{Int}() #TODO: Converter para boolean
-    builder.indices.S_Locais_Candidatos_n3 = Vector{Int}()
-    builder.indices.S_instalacoes_reais_n3 = Vector{Int}()
-    builder.indices.S_equipes_n3 = Vector{Int}()
-    builder = without_fix_real_facilities_n3(builder::HealthcareModelBuilder)
-    builder = without_candidates_third_level(builder::HealthcareModelBuilder)
-    builder = without_capacity_constraint_third_level(builder)
-    return builder
+    new_builder = deepcopy(builder)
+    new_builder.indices.S_n3 = Vector{Int}()
+    new_builder.parameters.S_domains.dominio_level_n3 = Vector{Int}() #TODO: Converter para boolean
+    new_builder.indices.S_Locais_Candidatos_n3 = Vector{Int}()
+    new_builder.indices.S_instalacoes_reais_n3 = Vector{Int}()
+    new_builder.indices.S_equipes_n3 = Vector{Int}()
+    new_builder = without_fix_real_facilities_n3(new_builder)
+    new_builder = without_candidates_third_level(new_builder)
+    new_builder = without_capacity_constraint_third_level(new_builder)
+    return new_builder
 end
 
 
 function without_fix_real_facilities_n1(builder::HealthcareModelBuilder)
-    builder.parameters.S_domains.dominio_fixa_inst_reais_n1 = Vector{Int}()
-    return builder
+    new_builder = deepcopy(builder)
+    new_builder.parameters.S_domains.dominio_fixa_inst_reais_n1 = Vector{Int}()
+    return new_builder
 end
 
 
 function without_fix_real_facilities_n2(builder::HealthcareModelBuilder)
-    builder.parameters.S_domains.dominio_fixa_inst_reais_n2 = Vector{Int}()
-    return builder
+    new_builder = deepcopy(builder)
+    new_builder.parameters.S_domains.dominio_fixa_inst_reais_n2 = Vector{Int}()
+    return new_builder
 end
 
 
 function without_fix_real_facilities_n3(builder::HealthcareModelBuilder)
-    builder.parameters.S_domains.dominio_fixa_inst_reais_n3 = Vector{Int}()
-    return builder
+    new_builder = deepcopy(builder)
+    new_builder.parameters.S_domains.dominio_fixa_inst_reais_n3 = Vector{Int}()
+    return new_builder
 end
 
 
-
 function fixa_alocacoes_primarias_reais(builder::HealthcareModelBuilder)
-
-    builder.parameters.S_domains.dominio_n1 = Dict(k => [builder.indices.S_atribuicoes_reais_por_demanda[k]] for k in 1:length(builder.indices.S_atribuicoes_reais_por_demanda))
-    builder = without_capacity_constraint_first_level(builder)
-    return builder
-
+    new_builder = deepcopy(builder)
+    new_builder.parameters.S_domains.dominio_n1 = Dict(k => [new_builder.indices.S_atribuicoes_reais_por_demanda[k]] for k in 1:length(new_builder.indices.S_atribuicoes_reais_por_demanda))
+    new_builder = without_capacity_constraint_first_level(new_builder)
+    return new_builder
 end
 
 
