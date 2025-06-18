@@ -389,7 +389,7 @@ end
 
 function generate_all_visualizations()
     println("Carregando resultados...")
-    path = "resultados_otimizacao_Contagem_End.jld2"
+    path = "resultados_otimizacao_builder_sem_candidatos_n1.jld2"
     results, parameters, mun_data, indices = load_saved_results(path)
     
 
@@ -401,73 +401,11 @@ function generate_all_visualizations()
 
     println("Gerando Relatórios das Capacidades Utilizadas!")
     plot_cap_n1(mun_data, results, parameters, indices, "v13")
-    println("Visualizações geradas com sucesso!")
+    
 
     println("Gerando Relatórios do Fluxo das Equipes!")
-    results.equipes
-    #nivel, unidade, equipe!
-    df_equipes = DataFrame(
-        level = [k[1] for k in keys(results.equipes)],
-        unidade = [k[2] for k in keys(results.equipes)],
-        equipe = [k[3] for k in keys(results.equipes)],
-        fluxo = [v for v in values(results.equipes)]
-        )
-
-    unique_cbo_n1 = sort(unique(mun_data.equipes_n1.profissional_cbo))
-    unique_cbo_n2 = sort(unique(mun_data.equipes_n2.profissional_cbo))
-    unique_cbo_n3 = sort(unique(mun_data.equipes_n3.profissional_cbo))
-
-    df_equipes.cbo = map((eq, lvl) -> begin
-        if lvl == 1
-            return unique_cbo_n1[eq]
-        elseif lvl == 2
-            return unique_cbo_n2[eq]
-        else
-            return unique_cbo_n3[eq]
-        end
-    end, df_equipes.equipe, df_equipes.level)
-
-        # Agrupar por destino e somar os fluxos
-    #Plot apenas para n1 por enquanto!
-    uns_plots = vcat(indices.S_instalacoes_reais_n1 , results.unidades_abertas_n1)
-    df_eq_n1 = df_equipes[(df_equipes.level .== 1) .& (df_equipes.unidade .∈ Ref(uns_plots)), :]
-    
-    for eq in unique(df_eq_n1.cbo)
-        df_plot = df_eq_n1[df_eq_n1.cbo .== eq, :]
-        fig = Figure(resolution=(1200, 800))  # Aumentei a resolução para melhor visualização
-        ax = Axis(fig[1, 1], 
-            title="Fluxo Total por Equipe $(eq)", 
-            xlabel="Unidade", 
-            ylabel="Fluxo da Equipe $(eq)",
-            yticks=(1:nrow(df_plot))  # Define os ticks do eixo y
-        )
-    
-        # Criar o gráfico de barras
-        barplot!(ax, 
-            1:nrow(df_plot),      # posições das barras
-            df_plot.fluxo,  # valores das barras
-            direction=:x,       # direção horizontal
-            color=:yellow,        # cor das barras
-            alpha=0.7,          # transparência      # largura das barras
-        )
-    
-        # Ajustar o layout
-        ax.xgridvisible = false  # remover grid vertical
-        ax.ygridvisible = true   # manter grid horizontal
-    
-        # Ajustar fonte dos labels
-        ax.yticklabelsize = 12
-        ax.xticklabelsize = 12
-    
-        # Ajustar margens
-        ax.alignmode = Outside(10)  # adicionar margem externa
-    
-        # Inverter a ordem do eixo y para que o maior valor fique no topo
-        ax.yreversed = true
-    
-        # Salvar o gráfico
-        save("fluxo_n1_eq_$(eq)_$(version).png", fig)
-    end
+    plot_fluxo_equipes_por_cbo(mun_data, results, parameters, indices, "v13")
+    println("Visualizações geradas com sucesso!")
 
 end
 
