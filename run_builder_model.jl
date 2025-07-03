@@ -1,4 +1,4 @@
-using JuMP, HiGHS, JLD2
+using JuMP, HiGHS, JLD2, XLSX
 using Base: deepcopy
 
 include("healthcare_model.jl")
@@ -33,8 +33,8 @@ function example_usage()
     builder_oficial = CreateHealthcareModelBuilder(deepcopy(parameters), deepcopy(indices), deepcopy(mun_data)) |>
     #without_second_level |>
     #without_third_level |>
-    # fixa_alocacoes_primarias_reais 
-    without_candidates_first_level |>
+    #fixa_alocacoes_primarias_reais |>
+    #without_candidates_first_level |>
     without_candidates_second_level |>
     without_candidates_third_level |>
 
@@ -52,7 +52,7 @@ function example_usage()
 
 
     results = extract_results(builder_oficial.model, builder_oficial.indices)
-    version_result = "builder_sem_candidatos_n1"
+    version_result = "builder_cenario_3"
     println("Salvando resultados e dados...")
     save("resultados_otimizacao_$(version_result).jld2", Dict(
         "results" => results,
@@ -60,56 +60,8 @@ function example_usage()
         "mun_data" => mun_data,
         "indices" => indices
     ))
-
-    
-
-
-
-    builder_alocacoes_n1_fixadas = CreateHealthcareModelBuilder(deepcopy(parameters), deepcopy(indices), deepcopy(mun_data)) |>
-    #without_second_level |>
-    #without_third_level |>
-    fixa_alocacoes_primarias_reais |>
-    #without_candidates_first_level |>
-    without_candidates_second_level |>
-    without_candidates_third_level |>
-
-    #without_fix_real_facilities_n1 |>
-    #without_fix_real_facilities_n2 |>
-    #without_fix_real_facilities_n3 |>
-
-    #without_capacity_constraint_first_level |>
-    without_capacity_constraint_second_level |>
-    without_capacity_constraint_third_level |>
-    build
-
-
-    
-    println("Resolvendo modelo...")
-    optimize!(builder_alocacoes_n1_fixadas.model)
-    
-    # Extrair e processar resultados
-    println("Processando resultados...")
-    results = extract_results(builder_alocacoes_n1_fixadas.model, builder_alocacoes_n1_fixadas.indices)
-    version_result = "builder_atr_n1_fixado_v1"
-    println("Salvando resultados e dados...")
-    save("resultados_otimizacao_$(version_result).jld2", Dict(
-        "results" => results,
-        "parameters" => parameters,
-        "mun_data" => mun_data,
-        "indices" => indices
-    ))
-    
-    # Imprimir resultados
-    println("\nResultados da otimização:")
-    println("Status: $(results.status)")
-    println("Valor objetivo: $(results.objective_value)")
-    println("\nUnidades abertas:")
-    println("Nível 1: $(length(results.unidades_abertas_n1)) unidades")
-    println("Nível 2: $(length(results.unidades_abertas_n2)) unidades")
-    println("Nível 3: $(length(results.unidades_abertas_n3)) unidades")
-
-        #Crio variaveis primeiro!
-
+    print_parcelas_funcao_objetivo(builder_oficial.model)
+    gerar_excel_funcao_objetivo(builder_oficial.model, "resultados_custos_n1.xlsx")
     
     return model, results
 end

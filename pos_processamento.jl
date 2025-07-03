@@ -4,6 +4,7 @@ using GeoMakie
 using DataFrames
 using Statistics
 using StatsPlots
+using StatsBase
 import CairoMakie: scatter!
 
 
@@ -281,6 +282,13 @@ function plot_cap_n1(mun_data, results, parameters, indices, versao)
     df_fluxos_agrupados = combine(groupby(df_fluxos, [:destino, :level]), :fluxo => sum => :fluxo_total)
     df_n1 = df_fluxos_agrupados[df_fluxos_agrupados.level .== 1, :]
 
+    print("Unidades abertas acima da capacidade")
+    print(size(filter(:fluxo_total => x -> x > 10000, df_n1), 1))
+
+
+
+
+
     sort!(df_n1, :fluxo_total, rev=true)  # Ordena o DataFrame em ordem decrescente
 
     # Criar o gráfico de barras horizontal usando CairoMakie
@@ -347,7 +355,10 @@ function plot_fluxo_equipes_por_cbo(mun_data, results, parameters, indices, vers
     #Plot apenas para n1 por enquanto!
     uns_plots = vcat(indices.S_instalacoes_reais_n1 , results.unidades_abertas_n1)
     df_eq_n1 = df_equipes[(df_equipes.level .== 1) .& (df_equipes.unidade .∈ Ref(uns_plots)), :]
-    
+    df_eqs_n1_fluxo_neg = df_eq_n1[df_eq_n1.fluxo .< 0, :]
+    countmap(df_eqs_n1_fluxo_neg.cbo)
+
+
     for eq in unique(df_eq_n1.cbo)
         df_plot = df_eq_n1[df_eq_n1.cbo .== eq, :]
         fig = Figure(resolution=(1200, 800))  # Aumentei a resolução para melhor visualização
@@ -389,9 +400,23 @@ end
 
 function generate_all_visualizations()
     println("Carregando resultados...")
-    path = "resultados_otimizacao_builder_sem_candidatos_n1.jld2"
+    path = "resultados_otimizacao_builder_cenario_1.jld2"
     results, parameters, mun_data, indices = load_saved_results(path)
-    
+
+    println("\nResultados da otimização:")
+    println("Status: $(results.status)")
+    println("Valor objetivo: $(results.objective_value)")
+
+
+
+    println("\nUnidades abertas:")
+    println("Nível 1: $(length(results.unidades_abertas_n1)) unidades")
+    println("Nível 2: $(length(results.unidades_abertas_n2)) unidades")
+    println("Nível 3: $(length(results.unidades_abertas_n3)) unidades")
+
+
+
+
 
     println("Gerando mapas da rede hierárquica...")
     rede_primaria =  plot_atribuicoes_primarias(mun_data, results, parameters, indices, "v13")

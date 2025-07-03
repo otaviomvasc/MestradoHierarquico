@@ -61,9 +61,6 @@ function without_candidates_second_level(builder::HealthcareModelBuilder)
         k => [i for i in new_builder.parameters.S_domains.dominio_n2[k] if i in new_builder.indices.S_n2]
         for k in keys(new_builder.parameters.S_domains.dominio_n2)
     )
-
-
-    
     return new_builder
 end
 

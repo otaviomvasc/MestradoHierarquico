@@ -315,3 +315,341 @@ function extract_results(model::Model, indices::ModelIndices)::OptimizationResul
         equipes
     )
 end 
+
+function print_parcelas_funcao_objetivo(model)
+    println("="^60)
+    println("PARCELAS DA FUNCAO OBJETIVO")
+    println("="^60)
+    
+    # Parcelas por nível
+    println("\nCUSTOS POR NIVEL:")
+    println("-"^40)
+    
+    # Nível 1 (Primário)
+    println("\nNIVEL PRIMARIO:")
+    println("  • Custo Logistico N1: R\$ " * string(round(value(model[:custo_logistico_n1]), digits=2)))
+    println("  • Custo Fixo Novos N1: R\$ " * string(round(value(model[:custo_fixo_novos_n1]), digits=2)))
+    println("  • Custo Fixo Existente N1: R\$ " * string(round(value(model[:custo_fixo_existente_n1]), digits=2)))
+    println("  • Custo Equipes Novas N1: R\$ " * string(round(value(model[:custo_times_novos_n1]), digits=2)))
+    println("  • Custo Variavel N1: R\$ " * string(round(value(model[:custo_variavel_n1]), digits=2)))
+    
+    # Nível 2 (Secundário)
+    println("\nNIVEL SECUNDARIO:")
+    println("  • Custo Logistico N2: R\$ " * string(round(value(model[:custo_logistico_n2]), digits=2)))
+    println("  • Custo Fixo Existente N2: R\$ " * string(round(value(model[:custo_fixo_existente_n2]), digits=2)))
+    println("  • Custo Equipes Novas N2: R\$ " * string(round(value(model[:custo_times_novos_n2]), digits=2)))
+    println("  • Custo Variavel N2: R\$ " * string(round(value(model[:custo_variavel_n2]), digits=2)))
+    
+    # Nível 3 (Terciário)
+    println("\nNIVEL TERCIARIO:")
+    println("  • Custo Logistico N3: R\$ " * string(round(value(model[:custo_logistico_n3]), digits=2)))
+    println("  • Custo Fixo Existente N3: R\$ " * string(round(value(model[:custo_fixo_existente_n3]), digits=2)))
+    println("  • Custo Equipes Novas N3: R\$ " * string(round(value(model[:custo_times_novos_n3]), digits=2)))
+    println("  • Custo Variavel N3: R\$ " * string(round(value(model[:custo_variavel_n3]), digits=2)))
+    
+    # Custos agregados
+    println("\nCUSTOS AGREGADOS:")
+    println("-"^40)
+    println("  • Custo Logistico Total: R\$ " * string(round(value(model[:custo_logistico]), digits=2)))
+    println("  • Custo Fixo Novo Total: R\$ " * string(round(value(model[:custo_fixo_novo]), digits=2)))
+    println("  • Custo Fixo Existente Total: R\$ " * string(round(value(model[:custo_fixo_existente]), digits=2)))
+    println("  • Custo Equipes Novas Total: R\$ " * string(round(value(model[:custo_times_novos]), digits=2)))
+    println("  • Custo Variavel Total: R\$ " * string(round(value(model[:custo_variavel]), digits=2)))
+    
+    # Custo total
+    println("\nCUSTO TOTAL:")
+    println("-"^40)
+    custo_total = value(model[:custo_logistico]) + 
+                  value(model[:custo_fixo_novo]) + 
+                  value(model[:custo_fixo_existente]) + 
+                  value(model[:custo_times_novos]) + 
+                  value(model[:custo_variavel])
+    println("  • Custo Total: R\$ " * string(round(custo_total, digits=2)))
+    
+    # Percentuais de cada parcela
+    println("\nPERCENTUAIS DE CADA PARCELA:")
+    println("-"^40)
+    println("  • Custo Logistico: " * string(round(100 * value(model[:custo_logistico]) / custo_total, digits=1)) * "%")
+    println("  • Custo Fixo Novo: " * string(round(100 * value(model[:custo_fixo_novo]) / custo_total, digits=1)) * "%")
+    println("  • Custo Fixo Existente: " * string(round(100 * value(model[:custo_fixo_existente]) / custo_total, digits=1)) * "%")
+    println("  • Custo Equipes Novas: " * string(round(100 * value(model[:custo_times_novos]) / custo_total, digits=1)) * "%")
+    println("  • Custo Variavel: " * string(round(100 * value(model[:custo_variavel]) / custo_total, digits=1)) * "%")
+    
+    println("\n" * "="^60)
+end
+
+# Função para imprimir detalhes das variáveis de decisão
+function print_variaveis_decisao(model)
+    println("\nVARIAVEIS DE DECISAO:")
+    println("-"^40)
+    
+    # Unidades abertas
+    println("\nUNIDADES ABERTAS:")
+    println("  • Nivel 1: " * string(sum(value.(model[:Abr_n1]))) * " unidades")
+    println("  • Nivel 2: " * string(sum(value.(model[:Abr_n2]))) * " unidades")
+    println("  • Nivel 3: " * string(sum(value.(model[:Abr_n3]))) * " unidades")
+    
+    # Equipes alocadas
+    println("\nEQUIPES ALOCADAS:")
+    println("  • Nivel 1: " * string(sum(value.(model[:eq_n1]))) * " equipes")
+    println("  • Nivel 2: " * string(sum(value.(model[:eq_n2]))) * " equipes")
+    println("  • Nivel 3: " * string(sum(value.(model[:eq_n3]))) * " equipes")
+end
+
+# Função para gerar arquivo Excel com dados da função objetivo
+function gerar_excel_funcao_objetivo(model, nome_arquivo="resultados_funcao_objetivo.xlsx")
+    # Coletar todos os dados
+    dados = Dict()
+    
+    # Custos por nível
+    dados["custo_logistico_n1"] = round(value(model[:custo_logistico_n1]), digits=2)
+    dados["custo_fixo_novos_n1"] = round(value(model[:custo_fixo_novos_n1]), digits=2)
+    dados["custo_fixo_existente_n1"] = round(value(model[:custo_fixo_existente_n1]), digits=2)
+    dados["custo_times_novos_n1"] = round(value(model[:custo_times_novos_n1]), digits=2)
+    dados["custo_variavel_n1"] = round(value(model[:custo_variavel_n1]), digits=2)
+    
+    dados["custo_logistico_n2"] = round(value(model[:custo_logistico_n2]), digits=2)
+    dados["custo_fixo_existente_n2"] = round(value(model[:custo_fixo_existente_n2]), digits=2)
+    dados["custo_times_novos_n2"] = round(value(model[:custo_times_novos_n2]), digits=2)
+    dados["custo_variavel_n2"] = round(value(model[:custo_variavel_n2]), digits=2)
+    
+    dados["custo_logistico_n3"] = round(value(model[:custo_logistico_n3]), digits=2)
+    dados["custo_fixo_existente_n3"] = round(value(model[:custo_fixo_existente_n3]), digits=2)
+    dados["custo_times_novos_n3"] = round(value(model[:custo_times_novos_n3]), digits=2)
+    dados["custo_variavel_n3"] = round(value(model[:custo_variavel_n3]), digits=2)
+    
+    # Custos agregados
+    dados["custo_logistico_total"] = round(value(model[:custo_logistico]), digits=2)
+    dados["custo_fixo_novo_total"] = round(value(model[:custo_fixo_novo]), digits=2)
+    dados["custo_fixo_existente_total"] = round(value(model[:custo_fixo_existente]), digits=2)
+    dados["custo_times_novos_total"] = round(value(model[:custo_times_novos]), digits=2)
+    dados["custo_variavel_total"] = round(value(model[:custo_variavel]), digits=2)
+    
+    # Custo total
+    custo_total = value(model[:custo_logistico]) + 
+                  value(model[:custo_fixo_novo]) + 
+                  value(model[:custo_fixo_existente]) + 
+                  value(model[:custo_times_novos]) + 
+                  value(model[:custo_variavel])
+    dados["custo_total"] = round(custo_total, digits=2)
+    
+    # Percentuais
+    dados["perc_logistico"] = round(100 * value(model[:custo_logistico]) / custo_total, digits=1)
+    dados["perc_fixo_novo"] = round(100 * value(model[:custo_fixo_novo]) / custo_total, digits=1)
+    dados["perc_fixo_existente"] = round(100 * value(model[:custo_fixo_existente]) / custo_total, digits=1)
+    dados["perc_equipes_novas"] = round(100 * value(model[:custo_times_novos]) / custo_total, digits=1)
+    dados["perc_variavel"] = round(100 * value(model[:custo_variavel]) / custo_total, digits=1)
+    
+    # Variáveis de decisão
+    dados["unidades_abertas_n1"] = sum(value.(model[:Abr_n1]))
+    dados["unidades_abertas_n2"] = sum(value.(model[:Abr_n2]))
+    dados["unidades_abertas_n3"] = sum(value.(model[:Abr_n3]))
+    dados["equipes_alocadas_n1"] = sum(value.(model[:eq_n1]))
+    dados["equipes_alocadas_n2"] = sum(value.(model[:eq_n2]))
+    dados["equipes_alocadas_n3"] = sum(value.(model[:eq_n3]))
+    
+    # Criar arquivo Excel
+    XLSX.openxlsx(nome_arquivo, mode="w") do xf
+        # Planilha 1: Custos por Nível
+        sheet1 = xf[1]
+        sheet1.name = "Custos por Nivel"
+        
+        # Adicionar novas planilhas
+        sheet2 = XLSX.addsheet!(xf, "Custos Agregados")
+        sheet3 = XLSX.addsheet!(xf, "Variaveis Decisao")
+        sheet4 = XLSX.addsheet!(xf, "Resumo Executivo")
+        
+        # Cabeçalhos
+        sheet1["A1"] = "Nivel"
+        sheet1["B1"] = "Tipo de Custo"
+        sheet1["C1"] = "Valor (R\$)"
+        sheet1["D1"] = "Descricao"
+        
+        # Dados Nível 1
+        sheet1["A2"] = "Primario"
+        sheet1["B2"] = "Logistico"
+        sheet1["C2"] = dados["custo_logistico_n1"]
+        sheet1["D2"] = "Custo de transporte nível primário"
+        
+        sheet1["A3"] = "Primario"
+        sheet1["B3"] = "Fixo Novos"
+        sheet1["C3"] = dados["custo_fixo_novos_n1"]
+        sheet1["D3"] = "Custo de abertura de novas unidades"
+        
+        sheet1["A4"] = "Primario"
+        sheet1["B4"] = "Fixo Existente"
+        sheet1["C4"] = dados["custo_fixo_existente_n1"]
+        sheet1["D4"] = "Custo fixo das unidades existentes"
+        
+        sheet1["A5"] = "Primario"
+        sheet1["B5"] = "Equipes Novas"
+        sheet1["C5"] = dados["custo_times_novos_n1"]
+        sheet1["D5"] = "Custo das novas equipes"
+        
+        sheet1["A6"] = "Primario"
+        sheet1["B6"] = "Variavel"
+        sheet1["C6"] = dados["custo_variavel_n1"]
+        sheet1["D6"] = "Custo variável por paciente"
+        
+        # Dados Nível 2
+        sheet1["A7"] = "Secundario"
+        sheet1["B7"] = "Logistico"
+        sheet1["C7"] = dados["custo_logistico_n2"]
+        sheet1["D7"] = "Custo de transporte nível secundário"
+        
+        sheet1["A8"] = "Secundario"
+        sheet1["B8"] = "Fixo Existente"
+        sheet1["C8"] = dados["custo_fixo_existente_n2"]
+        sheet1["D8"] = "Custo fixo das unidades existentes"
+        
+        sheet1["A9"] = "Secundario"
+        sheet1["B9"] = "Equipes Novas"
+        sheet1["C9"] = dados["custo_times_novos_n2"]
+        sheet1["D9"] = "Custo das novas equipes"
+        
+        sheet1["A10"] = "Secundario"
+        sheet1["B10"] = "Variavel"
+        sheet1["C10"] = dados["custo_variavel_n2"]
+        sheet1["D10"] = "Custo variável por paciente"
+        
+        # Dados Nível 3
+        sheet1["A11"] = "Terciario"
+        sheet1["B11"] = "Logistico"
+        sheet1["C11"] = dados["custo_logistico_n3"]
+        sheet1["D11"] = "Custo de transporte nível terciário"
+        
+        sheet1["A12"] = "Terciario"
+        sheet1["B12"] = "Fixo Existente"
+        sheet1["C12"] = dados["custo_fixo_existente_n3"]
+        sheet1["D12"] = "Custo fixo das unidades existentes"
+        
+        sheet1["A13"] = "Terciario"
+        sheet1["B13"] = "Equipes Novas"
+        sheet1["C13"] = dados["custo_times_novos_n3"]
+        sheet1["D13"] = "Custo das novas equipes"
+        
+        sheet1["A14"] = "Terciario"
+        sheet1["B14"] = "Variavel"
+        sheet1["C14"] = dados["custo_variavel_n3"]
+        sheet1["D14"] = "Custo variável por paciente"
+        
+        # Planilha 2: Custos Agregados (já criada acima)
+        
+        sheet2["A1"] = "Tipo de Custo"
+        sheet2["B1"] = "Valor (R\$)"
+        sheet2["C1"] = "Percentual (%)"
+        sheet2["D1"] = "Descricao"
+        
+        sheet2["A2"] = "Logistico Total"
+        sheet2["B2"] = dados["custo_logistico_total"]
+        sheet2["C2"] = dados["perc_logistico"]
+        sheet2["D2"] = "Custo total de transporte"
+        
+        sheet2["A3"] = "Fixo Novo Total"
+        sheet2["B3"] = dados["custo_fixo_novo_total"]
+        sheet2["C3"] = dados["perc_fixo_novo"]
+        sheet2["D3"] = "Custo total de abertura de novas unidades"
+        
+        sheet2["A4"] = "Fixo Existente Total"
+        sheet2["B4"] = dados["custo_fixo_existente_total"]
+        sheet2["C4"] = dados["perc_fixo_existente"]
+        sheet2["D4"] = "Custo fixo total das unidades existentes"
+        
+        sheet2["A5"] = "Equipes Novas Total"
+        sheet2["B5"] = dados["custo_times_novos_total"]
+        sheet2["C5"] = dados["perc_equipes_novas"]
+        sheet2["D5"] = "Custo total das novas equipes"
+        
+        sheet2["A6"] = "Variavel Total"
+        sheet2["B6"] = dados["custo_variavel_total"]
+        sheet2["C6"] = dados["perc_variavel"]
+        sheet2["D6"] = "Custo variável total por paciente"
+        
+        sheet2["A7"] = "CUSTO TOTAL"
+        sheet2["B7"] = dados["custo_total"]
+        sheet2["C7"] = 100.0
+        sheet2["D7"] = "Custo total do sistema"
+        
+        # Planilha 3: Variáveis de Decisão (já criada acima)
+        
+        sheet3["A1"] = "Nivel"
+        sheet3["B1"] = "Tipo"
+        sheet3["C1"] = "Quantidade"
+        sheet3["D1"] = "Descricao"
+        
+        sheet3["A2"] = "Primario"
+        sheet3["B2"] = "Unidades Abertas"
+        sheet3["C2"] = dados["unidades_abertas_n1"]
+        sheet3["D2"] = "Número de unidades do nível primário abertas"
+        
+        sheet3["A3"] = "Secundario"
+        sheet3["B3"] = "Unidades Abertas"
+        sheet3["C3"] = dados["unidades_abertas_n2"]
+        sheet3["D3"] = "Número de unidades do nível secundário abertas"
+        
+        sheet3["A4"] = "Terciario"
+        sheet3["B4"] = "Unidades Abertas"
+        sheet3["C4"] = dados["unidades_abertas_n3"]
+        sheet3["D4"] = "Número de unidades do nível terciário abertas"
+        
+        sheet3["A5"] = "Primario"
+        sheet3["B5"] = "Equipes Alocadas"
+        sheet3["C5"] = dados["equipes_alocadas_n1"]
+        sheet3["D5"] = "Número de equipes alocadas no nível primário"
+        
+        sheet3["A6"] = "Secundario"
+        sheet3["B6"] = "Equipes Alocadas"
+        sheet3["C6"] = dados["equipes_alocadas_n2"]
+        sheet3["D6"] = "Número de equipes alocadas no nível secundário"
+        
+        sheet3["A7"] = "Terciario"
+        sheet3["B7"] = "Equipes Alocadas"
+        sheet3["C7"] = dados["equipes_alocadas_n3"]
+        sheet3["D7"] = "Número de equipes alocadas no nível terciário"
+        
+        # Planilha 4: Resumo Executivo (já criada acima)
+        
+        sheet4["A1"] = "RESUMO EXECUTIVO"
+        sheet4["A2"] = "Custo Total do Sistema"
+        sheet4["B2"] = dados["custo_total"]
+        sheet4["C2"] = "R\$"
+        
+        sheet4["A4"] = "Maior Componente de Custo"
+        maior_custo = maximum([dados["perc_logistico"], dados["perc_fixo_novo"], 
+                              dados["perc_fixo_existente"], dados["perc_equipes_novas"], 
+                              dados["perc_variavel"]])
+        
+        if maior_custo == dados["perc_logistico"]
+            sheet4["B4"] = "Custo Logístico"
+            sheet4["C4"] = string(dados["perc_logistico"]) * "%"
+        elseif maior_custo == dados["perc_fixo_novo"]
+            sheet4["B4"] = "Custo Fixo Novo"
+            sheet4["C4"] = string(dados["perc_fixo_novo"]) * "%"
+        elseif maior_custo == dados["perc_fixo_existente"]
+            sheet4["B4"] = "Custo Fixo Existente"
+            sheet4["C4"] = string(dados["perc_fixo_existente"]) * "%"
+        elseif maior_custo == dados["perc_equipes_novas"]
+            sheet4["B4"] = "Custo Equipes Novas"
+            sheet4["C4"] = string(dados["perc_equipes_novas"]) * "%"
+        else
+            sheet4["B4"] = "Custo Variável"
+            sheet4["C4"] = string(dados["perc_variavel"]) * "%"
+        end
+        
+        sheet4["A6"] = "Total de Unidades Abertas"
+        sheet4["B6"] = dados["unidades_abertas_n1"] + dados["unidades_abertas_n2"] + dados["unidades_abertas_n3"]
+        
+        sheet4["A7"] = "Total de Equipes Alocadas"
+        sheet4["B7"] = dados["equipes_alocadas_n1"] + dados["equipes_alocadas_n2"] + dados["equipes_alocadas_n3"]
+    end
+    
+    println("Arquivo Excel gerado com sucesso: " * nome_arquivo)
+    println("Planilhas criadas:")
+    println("  1. Custos por Nivel")
+    println("  2. Custos Agregados") 
+    println("  3. Variaveis Decisao")
+    println("  4. Resumo Executivo")
+end
+
+
+
