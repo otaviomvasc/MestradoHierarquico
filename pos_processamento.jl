@@ -324,7 +324,7 @@ function plot_cap_n1(mun_data, results, parameters, indices, versao)
     ax.yreversed = true
 
     # Salvar o gráfico
-    save("cap_n2.png", fig)
+    save("capacidade.png", fig)
 end
 
 function plot_fluxo_equipes_por_cbo(mun_data, results, parameters, indices, versao)
@@ -400,7 +400,7 @@ end
 
 function generate_all_visualizations()
     println("Carregando resultados...")
-    path = "resultados_otimizacao_builder_cenario_1.jld2"
+    path = "resultados_otimizacao_builder_cenario_3.jld2"
     results, parameters, mun_data, indices = load_saved_results(path)
 
     println("\nResultados da otimização:")
@@ -422,12 +422,12 @@ function generate_all_visualizations()
     rede_primaria =  plot_atribuicoes_primarias(mun_data, results, parameters, indices, "v13")
     #save("rede_saude_primaria.png", rede_primaria)
     rede_secundaria = plot_flow_map(mun_data, results, parameters, indices)	
-    save("rede_saude_secundaria.png", rede_secundaria)
+    save("mapa_flow_cenario_3.png", rede_secundaria)
 
     println("Gerando Relatórios das Capacidades Utilizadas!")
     plot_cap_n1(mun_data, results, parameters, indices, "v13")
     
-
+    #capacidade_cen_3.png
     println("Gerando Relatórios do Fluxo das Equipes!")
     plot_fluxo_equipes_por_cbo(mun_data, results, parameters, indices, "v13")
     println("Visualizações geradas com sucesso!")

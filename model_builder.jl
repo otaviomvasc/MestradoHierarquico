@@ -158,6 +158,7 @@ end
 
 # Método para construir o modelo final - Depois que tiver pronto passar para outro metodo!
 function build(builder::HealthcareModelBuilder)
+    #builder = builder_oficial
     S_n1 = builder.indices.S_n1
     S_n2 = builder.indices.S_n2
     S_n3 = builder.indices.S_n3
@@ -237,7 +238,7 @@ function build(builder::HealthcareModelBuilder)
 
     #TODO: Assim que caminhar com resultados criar o builder de modelos!
     flag_has_2_nivel = length(S_n2) > 0 ? true : false
-    flag_has_3_nivel = length(S_n3) > 0 & flag_has_2_nivel == true ? true : false
+    flag_has_3_nivel = (length(S_n3) > 0 && flag_has_2_nivel == true) ? true : false
 
 
     time_limit = 1500.0
