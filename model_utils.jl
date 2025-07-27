@@ -322,12 +322,52 @@ function calculate_domain_fix_instalacoes_reais(indices::ModelIndices)::Tuple{Ve
 end
 
 
-function calculate_domains(mun_data::MunicipalityData, data::HealthcareData, S_Matriz_Dist::Matriz_Dist, indices::ModelIndices)::Domains
+function calculate_domains(mun_data::MunicipalityData, data::HealthcareData, S_Matriz_Dist::Matriz_Dist, indices::ModelIndices, reduz_instalacoes_candidatas::Bool)::Domains
     # Constantes de distância máxima
     dominio_atr_n1, dominio_atr_n2, dominio_atr_n3 = calculate_flow_patients_domain(mun_data::MunicipalityData, data::HealthcareData, S_Matriz_Dist::Matriz_Dist, indices::ModelIndices)
     S_dominio_cap_n1, S_dominio_cap_n2, S_dominio_cap_n3 = calculate_domains_capacity_constrant(indices::ModelIndices)
     S_dominio_level_n2, S_dominio_level_n3 = calculate_domains_second_and_third_level(indices::ModelIndices)
     dominio_fixa_inst_reais_n1, dominio_fixa_inst_reais_n2, dominio_fixa_inst_reais_n3 = calculate_domain_fix_instalacoes_reais(indices::ModelIndices)
+
+    if reduz_instalacoes_candidatas == true
+
+        cs_atendidos_somente_candidatos = [d for d in keys(dominio_atr_n1) if length([k for k in dominio_atr_n1[d] if k in indices.S_instalacoes_reais_n1]) == 0]
+        candidatos_n1_necessarios = []
+        for cs in cs_atendidos_somente_candidatos
+            candidatos_n1_necessarios = vcat(candidatos_n1_necessarios, dominio_atr_n1[cs] )
+        end
+
+        indices.S_Locais_Candidatos_n1 = unique(candidatos_n1_necessarios)
+        indices.S_n1 = vcat(indices.S_instalacoes_reais_n1, indices.S_Locais_Candidatos_n1)
+
+        cs_atendidos_somente_candidatos_n2 = [d for d in keys(dominio_atr_n2) if length([ k for k in dominio_atr_n2[d] if k in indices.S_instalacoes_reais_n2]) == 0]
+        candidatos_n2_necessarios = []
+        for cs in cs_atendidos_somente_candidatos_n2
+            candidatos_n2_necessarios = vcat(candidatos_n2_necessarios, dominio_atr_n2[cs])
+        end
+
+        indices.S_Locais_Candidatos_n2 = unique(candidatos_n2_necessarios)
+        indices.S_n2 = vcat(indices.S_instalacoes_reais_n2, indices.S_Locais_Candidatos_n2)
+
+
+
+        cs_atendidos_somente_candidatos_n3 = [d for d in keys(dominio_atr_n3) if length([ k for k in dominio_atr_n3[d] if k in indices.S_instalacoes_reais_n3]) == 0]
+        candidatos_n3_necessarios = []
+        for cs in cs_atendidos_somente_candidatos_n3
+            candidatos_n3_necessarios = vcat(candidatos_n3_necessarios, dominio_atr_n3[cs])
+        end
+
+        indices.S_Locais_Candidatos_n3 = unique(candidatos_n3_necessarios)
+        indices.S_n3 = vcat(indices.S_instalacoes_reais_n3, indices.S_Locais_Candidatos_n3)
+
+
+        dominio_atr_n1, dominio_atr_n2, dominio_atr_n3 = calculate_flow_patients_domain(mun_data::MunicipalityData, data::HealthcareData, S_Matriz_Dist::Matriz_Dist, indices::ModelIndices)
+
+
+
+    end
+
+
 
     return Domains(dominio_atr_n1, 
                   dominio_atr_n2, 
@@ -348,13 +388,13 @@ end
 function create_model_parameters(mun_data::MunicipalityData, data::HealthcareData, indices::ModelIndices)::ModelParameters
     # Calcular matrizes de distância
     S_Matriz_Dist = calculate_distance_matrices(mun_data, indices)
-    dominios_model = calculate_domains(mun_data, data, S_Matriz_Dist, indices)
+    dominios_model = calculate_domains(mun_data, data, S_Matriz_Dist, indices, true)
     # Calcular parâmetros das equipes
     capacidade_n1, custo_n1, 
     capacidade_n2, custo_n2, 
     capacidade_n3, custo_n3,
     matriz_cap_n1, matriz_cap_n2, matriz_cap_n3 = calculate_equipment_parameters(mun_data, data)
-    
+    IVS = mun_data.IVS
 
     return ModelParameters(
         capacidade_n1,
@@ -367,7 +407,8 @@ function create_model_parameters(mun_data::MunicipalityData, data::HealthcareDat
         matriz_cap_n2,
         matriz_cap_n3,
         S_Matriz_Dist,
-        dominios_model
+        dominios_model, 
+        IVS
     )
 end
 

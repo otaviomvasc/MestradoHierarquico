@@ -1,0 +1,245 @@
+% Modelo matemático do problema de otimização em saúde hierárquica
+% (Gerado automaticamente a partir do código Julia)
+
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{geometry}
+\usepackage{enumitem}
+
+\geometry{margin=2.5cm}
+
+\title{Modelo Matemático do Problema de Otimização em Saúde Hierárquica}
+\author{Sistema de Otimização em Saúde}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\section{Introdução}
+
+Este documento apresenta a formulação matemática completa de dois modelos de otimização para redes de saúde hierárquicas:
+
+\begin{enumerate}
+    \item \textbf{Modelo de Minimização de Custos}: Otimiza a alocação de recursos minimizando o custo total do sistema
+    \item \textbf{Modelo de Maximização de Cobertura}: Maximiza a população atendida considerando vulnerabilidade social
+\end{enumerate}
+
+\section{Modelo de Minimização de Custos}
+
+\subsection{Conjuntos}
+
+\begin{itemize}
+    \item $D$: Conjunto de pontos de demanda
+    \item $S_1$: Conjunto de unidades primárias (n1)
+    \item $S_2$: Conjunto de unidades secundárias (n2)
+    \item $S_3$: Conjunto de unidades terciárias (n3)
+    \item $S_1^{cand}$: Unidades primárias candidatas
+    \item $S_1^{real}$: Unidades primárias reais
+    \item $S_2^{real}$: Unidades secundárias reais
+    \item $S_3^{real}$: Unidades terciárias reais
+    \item $E_1, E_2, E_3$: Conjuntos de equipes por nível
+    \item $P$: Conjunto de perfis populacionais
+    \item $\Omega_1(d)$: Domínio de alocação primária para $d$
+    \item $\Omega_2(n_1)$: Domínio de n2 para n1
+    \item $\Omega_3(n_2)$: Domínio de n3 para n2
+\end{itemize}
+
+\subsection{Parâmetros}
+
+\begin{itemize}
+    \item $dem_d$: Demanda no ponto $d$
+    \item $cap_{eq}$: Capacidade máxima por equipe $eq$
+    \item $S\_custo\_fixo\_n1, S\_custo\_equipe\_n1, S\_custo\_variavel\_n1$: custos
+    \item $\beta_{12}, \beta_{23}$: percentuais de encaminhamento
+    \item $Cap_{n1}, Cap_{n2}, Cap_{n3}$: capacidades máximas
+    \item $S\_capacidade\_CNES\_n1$: equipes existentes
+    \item $Matriz\_Dist\_n1, Matriz\_Dist\_n2, Matriz\_Dist\_n3$: matrizes de distância
+    \item $custo\_deslocamento$: custo unitário de transporte
+    \item $Custo\_abertura\_n1, Custo\_abertura\_n2, Custo\_abertura\_n3$: custos de abertura
+    \item $\pi_p$: percentual da população por perfil $p$
+\end{itemize}
+
+\subsection{Variáveis}
+
+\begin{itemize}
+    \item $y_{d,n_1} \in \{0,1\}$: Alocação do ponto $d$ à unidade $n_1$
+    \item $z_{n_1} \in \{0,1\}$: Abertura da unidade $n_1$
+    \item $x_{d,n_1,p} \geq 0$: Fluxo de pacientes do perfil $p$ de $d$ para $n_1$
+    \item $f_{eq,n_1} \geq 0$: Fluxo de equipes para $n_1$
+    \item $x_{n_1,n_2,p} \geq 0$: Fluxo de pacientes do perfil $p$ de $n_1$ para $n_2$
+    \item $x_{n_2,n_3,p} \geq 0$: Fluxo de pacientes do perfil $p$ de $n_2$ para $n_3$
+\end{itemize}
+
+\subsection{Função Objetivo}
+
+Minimizar o custo total do sistema:
+
+\begin{equation}
+\min \sum_{n \in \{1,2,3\}} \left( C_{log}^n + C_{fixo}^{novos,n} + C_{fixo}^{exist,n} + C_{eq}^n + C_{var}^n \right)
+\end{equation}
+
+Onde:
+\begin{itemize}
+    \item $C_{log}^n$: Custo logístico do nível $n$
+    \item $C_{fixo}^{novos,n}$: Custo fixo de novas unidades do nível $n$
+    \item $C_{fixo}^{exist,n}$: Custo fixo de unidades existentes do nível $n$
+    \item $C_{eq}^n$: Custo de equipes do nível $n$
+    \item $C_{var}^n$: Custo variável do nível $n$
+\end{itemize}
+
+\subsection{Restrições}
+
+\textbf{Alocação primária}
+\begin{equation}
+\sum_{n_1 \in \Omega_1(d)} y_{d,n_1} = 1, \quad \forall d \in D \tag{1}
+\end{equation}
+
+\textbf{Fluxo de pacientes primário}
+\begin{equation}
+x_{d,n_1,p} = y_{d,n_1} \cdot dem_d \cdot \pi_p, \quad \forall d \in D, n_1 \in \Omega_1(d), p \in P \tag{2}
+\end{equation}
+
+\textbf{Abertura de unidades candidatas}
+\begin{equation}
+\sum_{d \in D, p \in P: un \in \Omega_1(d)} x_{d,un,p} \leq z_{un} \cdot \sum_{d \in D} dem_d, \quad \forall un \in S_1^{cand} \tag{3}
+\end{equation}
+
+\textbf{Capacidade das unidades}
+\begin{equation}
+\sum_{d \in D, p \in P: n_1 \in \Omega_1(d)} x_{d,n_1,p} \leq Cap_{n_1}, \quad \forall n_1 \in S_1 \tag{4}
+\end{equation}
+
+\textbf{Restrição de equipes (reais)}
+\begin{equation}
+S\_capacidade\_CNES\_{un,eq} + f_{eq,un} = \sum_{d \in D, p \in P: un \in \Omega_1(d)} x_{d,un,p} \cdot cap_{eq}, \quad \forall eq \in E_1, un \in S_1^{real} \tag{5}
+\end{equation}
+
+\textbf{Restrição de equipes (candidatas)}
+\begin{equation}
+f_{eq,un} = \sum_{d \in D, p \in P: un \in \Omega_1(d)} x_{d,un,p} \cdot cap_{eq}, \quad \forall eq \in E_1, un \in S_1^{cand} \tag{6}
+\end{equation}
+
+\textbf{Fluxo secundário}
+\begin{equation}
+\sum_{n_2 \in \Omega_2(n_1)} x_{n_1,n_2,p} = \beta_{12} \cdot \sum_{d \in D: n_1 \in \Omega_1(d)} x_{d,n_1,p}, \quad \forall n_1 \in S_1, p \in P \tag{7}
+\end{equation}
+
+\textbf{Fluxo terciário}
+\begin{equation}
+\sum_{n_3 \in \Omega_3(n_2)} x_{n_2,n_3,p} = \beta_{23} \cdot \sum_{n_1 \in S_1: n_2 \in \Omega_2(n_1)} x_{n_1,n_2,p}, \quad \forall n_2 \in S_2, p \in P \tag{8}
+\end{equation}
+
+\textbf{Restrição de equipes nível 2}
+\begin{equation}
+S\_capacidade\_CNES\_{un,eq} + f_{eq,un} = \sum_{n_1 \in S_1, p \in P: un \in \Omega_2(n_1)} x_{n_1,un,p} \cdot cap_{eq}, \quad \forall eq \in E_2, un \in S_2^{real} \tag{9}
+\end{equation}
+
+\textbf{Restrição de equipes nível 3}
+\begin{equation}
+S\_capacidade\_CNES\_{un,eq} + f_{eq,un} = \sum_{n_2 \in S_2, p \in P: un \in \Omega_3(n_2)} x_{n_2,un,p} \cdot cap_{eq}, \quad \forall eq \in E_3, un \in S_3^{real} \tag{10}
+\end{equation}
+
+\textbf{Domínios das variáveis}
+\begin{equation}
+y_{d,n_1} \in \{0,1\}, \quad z_{n_1} \in \{0,1\}, \quad x_{d,n_1,p} \geq 0, \quad f_{eq,n_1} \geq 0, \quad x_{n_1,n_2,p} \geq 0, \quad x_{n_2,n_3,p} \geq 0
+\end{equation}
+
+\subsection{Expressões de Custo}
+
+\textbf{Custo Logístico}
+\begin{equation}
+C_{log}^n = \sum_{d \in D, un \in S_n, p \in P: un \in \Omega_n(d)} x_{d,un,p} \cdot dist_{d,un} \cdot custo\_transporte
+\end{equation}
+
+\textbf{Custo Fixo de Novas Unidades}
+\begin{equation}
+C_{fixo}^{novos,n} = \sum_{un \in S_n^{cand}} z_{un} \cdot Custo\_abertura\_n
+\end{equation}
+
+\textbf{Custo Fixo de Unidades Existentes}
+\begin{equation}
+C_{fixo}^{exist,n} = \sum_{un \in S_n^{real}} S\_custo\_fixo\_n
+\end{equation}
+
+\textbf{Custo de Equipes}
+\begin{equation}
+C_{eq}^n = \sum_{eq \in E_n, un \in S_n} f_{eq,un} \cdot S\_custo\_equipe\_n[eq]
+\end{equation}
+
+\textbf{Custo Variável}
+\begin{equation}
+C_{var}^n = \sum_{d \in D, un \in S_n, p \in P: un \in \Omega_n(d)} x_{d,un,p} \cdot S\_custo\_variavel\_n[p]
+\end{equation}
+
+\section{Modelo de Maximização de Cobertura}
+
+\subsection{Conjuntos e Parâmetros Adicionais}
+
+\begin{itemize}
+    \item $IVS_d$: Índice de Vulnerabilidade Social do ponto $d$
+    \item $Orçamento$: Limite orçamentário total
+\end{itemize}
+
+\subsection{Variáveis Adicionais}
+
+\begin{itemize}
+    \item $p_{d,eq,n_1} \geq 0$: População atendida do ponto $d$ pela equipe $eq$ na unidade $n_1$
+\end{itemize}
+
+\subsection{Função Objetivo}
+
+Maximizar a população atendida ponderada pelo IVS:
+
+\begin{equation}
+\max \sum_{d \in D} \sum_{eq \in E_1} \sum_{n_1 \in \Omega_1(d)} p_{d,eq,n_1} \cdot IVS_d
+\end{equation}
+
+\subsection{Restrições Específicas}
+
+\textbf{População atendida limitada pela alocação}
+\begin{equation}
+p_{d,eq,n_1} \leq y_{d,n_1} \cdot dem_d, \quad \forall d \in D, eq \in E_1, n_1 \in \Omega_1(d) \tag{11}
+\end{equation}
+
+\textbf{Limite total de população atendida}
+\begin{equation}
+\sum_{n_1 \in \Omega_1(d)} p_{d,eq,n_1} \leq dem_d, \quad \forall d \in D, eq \in E_1 \tag{12}
+\end{equation}
+
+\textbf{Abertura de unidades candidatas}
+\begin{equation}
+y_{d,s} \leq z_s, \quad \forall d \in D, s \in S_1^{cand}: s \in \Omega_1(d) \tag{13}
+\end{equation}
+
+\textbf{Restrição orçamentária}
+\begin{equation}
+C_{fixo}^{novos,1} + C_{fixo}^{exist,1} + C_{eq}^1 + C_{var}^1 \leq Orçamento \tag{14}
+\end{equation}
+
+\textbf{Fluxo secundário (simplificado)}
+\begin{equation}
+\sum_{n_2 \in \Omega_2(n_1)} x_{n_1,n_2} = \beta_{12} \cdot \sum_{d \in D, eq \in E_1: n_1 \in \Omega_1(d)} p_{d,eq,n_1}, \quad \forall n_1 \in S_1 \tag{15}
+\end{equation}
+
+\textbf{Fluxo terciário (simplificado)}
+\begin{equation}
+\sum_{n_3 \in \Omega_3(n_2)} x_{n_2,n_3} = \beta_{23} \cdot \sum_{n_1 \in S_1: n_2 \in \Omega_2(n_1)} x_{n_1,n_2}, \quad \forall n_2 \in S_2 \tag{16}
+\end{equation}
+
+\section{Observações Importantes}
+
+\begin{enumerate}
+    \item \textbf{Flexibilidade dos Níveis}: O modelo suporta configurações com 1, 2 ou 3 níveis hierárquicos através das flags $flag\_has\_2\_nivel$ e $flag\_has\_3\_nivel$.
+    
+    \item \textbf{Tratamento de Equipes}: As equipes são tratadas diferentemente para unidades reais (que já possuem equipes) e candidatas (que precisam de novas equipes).
+    
+    \item \textbf{Perfis Populacionais}: O modelo considera diferentes perfis populacionais ($p \in P$) com percentuais específicos.
+    
+    \item \textbf{Matriz de Distância}: Cada nível possui sua própria matriz de distância para cálculo dos custos logísticos.
+    
+    \item \textbf{Capacidades CNES}: As unidades reais já possuem equipes alocadas conforme dados do CNES, que são consideradas nas restrições.
+\end{enumerate}
+
+\end{document} 

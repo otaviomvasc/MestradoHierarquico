@@ -81,6 +81,7 @@ mutable struct MunicipalityData
     equipes_n2::DataFrame
     equipes_n3::DataFrame
     constantes::ModelConstants
+    IVS::Vector{Float64}
     
 end
 
@@ -113,12 +114,13 @@ mutable struct ModelParameters
     S_capacidade_CNES_n3::Matrix{Float64}  # [unidade, tipo_equipe]
     S_Matriz_Dist::Matriz_Dist
     S_domains::Domains
+    IVS::Vector{Float64}
 end
 
 # Funções de leitura de dados
 function load_healthcare_data(base_path::String)::HealthcareData
     return HealthcareData(
-        DataFrame(XLSX.readtable(joinpath(base_path, "dados_cidades_full_MG.xlsx"), "Sheet1")),
+        DataFrame(XLSX.readtable(joinpath(base_path, "Dados_demanda_demografia_ivs.xlsx"), "Sheet1")),
         DataFrame(XLSX.readtable(joinpath(base_path, "instalacoes_primarias.xlsx"), "Sheet1")),
         DataFrame(XLSX.readtable(joinpath(base_path, "instalacoes_secundarias.xlsx"), "Sheet1")),
         DataFrame(XLSX.readtable(joinpath(base_path, "instalacoes_terciarias.xlsx"), "Sheet1")),
@@ -141,6 +143,7 @@ function filter_municipality_data(data::HealthcareData, municipio::String)::Muni
     S_Valor_Demanda = [row["Total de pessoas"] for row in eachrow(df_m)]
     c_coords = [(row.Latitude, row.Longitude) for row in eachrow(df_m)]
     S_cnes_primario_referencia_real = [row["UBS_ref"] for row in eachrow(df_m)]
+    IVS = [row["IVS"] for row in eachrow(df_m)]
     # Quando coletar valores de demanda
 
     # Definição das constantes do modelo - Dados que precisamos melhorar!.
@@ -212,11 +215,12 @@ function filter_municipality_data(data::HealthcareData, municipio::String)::Muni
             S_pacientes,
             lista_doencas,
             porcentagem_populacao
-        )
+        ),
+        IVS
     )
 end
 
-function calculate_model_parameters(mun_data::MunicipalityData, data::HealthcareData)::Tuple{ModelIndices, ModelParameters}
+function calculate_model_parameters(mun_data::MunicipalityData, data::HealthcareData, )::Tuple{ModelIndices, ModelParameters}
     # Aqui você implementaria a lógica de cálculo dos parâmetros do modelo
     # Similar ao que está no seu código original, mas organizado em funções
     # Por exemplo:

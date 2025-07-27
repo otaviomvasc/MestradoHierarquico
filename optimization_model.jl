@@ -652,4 +652,189 @@ function gerar_excel_funcao_objetivo(model, nome_arquivo="resultados_funcao_obje
 end
 
 
+function create_optimization_model_maximal_coverage(indices::ModelIndices, parameters::ModelParameters, mun_data::MunicipalityData)::Model
 
+    # Extrair dados para facilitar a leitura e escrita do modelo!
+    S_n1 = indices.S_n1
+    S_n2 = indices.S_n2
+    S_n3 = indices.S_n3
+    S_locais_candidatos_n1 = indices.S_Locais_Candidatos_n1
+    S_instalacoes_reais_n1 = indices.S_instalacoes_reais_n1
+    S_instalacoes_reais_n2 = indices.S_instalacoes_reais_n2
+    S_instalacoes_reais_n3 = indices.S_instalacoes_reais_n3
+    S_Pontos_Demanda = indices.S_Pontos_Demanda
+    S_equipes = indices.S_equipes_n1
+    S_equipes_n2 = indices.S_equipes_n2
+    S_equipes_n3 = indices.S_equipes_n3
+    S_pacientes =  mun_data.constantes.S_pacientes
+    S_Valor_Demanda = mun_data.S_Valor_Demanda
+    porcentagem_populacao = mun_data.constantes.porcentagem_populacao
+    S_IVS = parameters.IVS
+
+    dominio_atr_n1 = parameters.S_domains.dominio_n1
+
+    #TODO: Retomar workarround de locais candidatos que atendam os pontos sem nenhum opcao no raio critico!
+    dominio_candidatos_n1 = Dict(d => [s for s in dominio_atr_n1[d] if s in S_locais_candidatos_n1] for d in keys(dominio_atr_n1))
+
+    dominio_atr_n2 = parameters.S_domains.dominio_n2
+    dominio_atr_n3 = parameters.S_domains.dominio_n3
+    
+    percent_n1_n2 = mun_data.constantes.percent_n1_n2
+    percent_n2_n3 = mun_data.constantes.percent_n2_n3
+
+    Cap_n1 = mun_data.constantes.Cap_n1
+    Cap_n2 = mun_data.constantes.Cap_n2
+    Cap_n3 = mun_data.constantes.Cap_n3
+
+
+    capacidade_maxima_por_equipe_n1 = parameters.capacidade_maxima_por_equipe_n1
+    capacidade_maxima_por_equipe_n2 = parameters.S_eq_por_paciente_n2
+    capacidade_maxima_por_equipe_n3 = parameters.S_eq_por_paciente_n3
+
+    S_custo_equipe_n1 = parameters.S_custo_equipe_n1
+    S_custo_equipe_n2 = parameters.S_custo_equipe_n2
+    S_custo_equipe_n3 = parameters.S_custo_equipe_n3
+
+    S_capacidade_CNES_n1 = parameters.S_capacidade_CNES_n1
+    S_capacidade_CNES_n2 = parameters.S_capacidade_CNES_n2
+    S_capacidade_CNES_n3 = parameters.S_capacidade_CNES_n3
+
+    Matriz_Dist_n1 = parameters.S_Matriz_Dist.Matriz_Dist_n1
+    Matriz_Dist_n2 = parameters.S_Matriz_Dist.Matriz_Dist_n2
+    Matriz_Dist_n3 = parameters.S_Matriz_Dist.Matriz_Dist_n3
+
+    custo_deslocamento = mun_data.constantes.custo_transporte  
+    Custo_abertura_n1 = mun_data.constantes.custo_abertura_n1
+    Custo_abertura_n2 = mun_data.constantes.custo_abertura_n2
+    Custo_abertura_n3 = mun_data.constantes.custo_abertura_n3
+
+    S_custo_variavel_n1 = mun_data.constantes.S_custo_variavel_n1
+    S_custo_variavel_n2 = mun_data.constantes.S_custo_variavel_n2
+    S_custo_variavel_n3 = mun_data.constantes.S_custo_variavel_n3
+
+    S_custo_fixo_n1 = mun_data.constantes.S_custo_fixo_n1
+    S_custo_fixo_n2 = mun_data.constantes.S_custo_fixo_n2
+    S_custo_fixo_n3 = mun_data.constantes.S_custo_fixo_n3
+
+
+
+    model = Model(HiGHS.Optimizer)
+    set_optimizer_attribute(model, "time_limit", 300.0)
+    set_optimizer_attribute(model, "primal_feasibility_tolerance", 1e-6) 
+    set_optimizer_attribute(model, "mip_rel_gap", 0.02) 
+    #Variaveis
+
+    #atribuicao primária
+    aloc_n1 = @variable(model, Aloc_[d in S_Pontos_Demanda, n1 in dominio_atr_n1[d]], Bin)
+    var_abr_n1 = @variable(model, Abr_n1[n1 in S_n1], Bin) #Abertura unidades primárias
+    fluxo_eq_n1 = @variable(model, eq_n1[eq in S_equipes, n1 in S_n1])
+    var_pop_atendida = @variable(model, pop_atendida[d in S_Pontos_Demanda, eq in S_equipes, n1 in dominio_atr_n1[d]] >= 0) #Inserir aqui as demografias das populacoes!
+
+    #inicialmente vou somente encaminhar demanda para niveis superiore
+    #Fluxo n2
+    fluxo_n2 = @variable(model, X_n2[n1 in S_n1, n2 in dominio_atr_n2[n1]] >= 0)
+    var_abr_n2 = @variable(model, Abr_n2[n2 in S_n2] == 1, Bin)
+    #Fluxo n3
+    fluxo_n3 = @variable(model, X_n3[n2 in S_n2, n3 in dominio_atr_n3[n2]] >= 0)
+    var_abr_n3 = @variable(model, Abr_n3[n3 in S_n3] == 1, Bin)
+
+
+
+
+    #Todas as unidades devem ser alocadas numa UBS de referencia
+    @constraint(model, [d in S_Pontos_Demanda], sum(Aloc_[d, n1] for n1 in dominio_atr_n1[d]) == 1)
+    @constraint(model, [d in S_Pontos_Demanda, eq in S_equipes, n1 in dominio_atr_n1[d]], var_pop_atendida[d, eq, n1] <= aloc_n1[d, n1] * S_Valor_Demanda[d])
+    @constraint(model, [d in S_Pontos_Demanda, eq in S_equipes], sum(var_pop_atendida[d, eq, n1] for n1 in dominio_atr_n1[d]) <= S_Valor_Demanda[d]) #Sei que esta redundante, mas é um teste para nao ter GAP infinito no solver.
+
+    #Abertura de unidades novas:
+    @constraint(model, [d in S_Pontos_Demanda, s in dominio_candidatos_n1[d]], 
+                         Aloc_[d, s] <= var_abr_n1[s] )
+
+    #Restricao do fluxo de equipes:
+    @constraint(model, [eq in S_equipes, un in S_instalacoes_reais_n1], 
+    S_capacidade_CNES_n1[un, eq] + fluxo_eq_n1[eq,un] == sum(pop_atendida[d, eq, un] for d in S_Pontos_Demanda if un in dominio_atr_n1[d]) * capacidade_maxima_por_equipe_n1[eq])
+
+
+    @constraint(model, [eq in S_equipes, un in S_locais_candidatos_n1], 
+        fluxo_eq_n1[eq,un] == sum(pop_atendida[d, eq, un] for d in S_Pontos_Demanda if un in dominio_atr_n1[d]) * capacidade_maxima_por_equipe_n1[eq])
+
+
+    #Limitacao de Orcamentos
+
+    #@expression(model, custo_logistico_n1,  sum(X_n1[d, un, p] * Matriz_Dist_n1[d, un] * custo_deslocamento for d in S_Pontos_Demanda, un in S_n1, p in S_pacientes if un in dominio_atr_n1[d]))
+
+    @expression(model, custo_fixo_novos_n1, sum(Abr_n1[un] * S_custo_fixo_n1 for un in S_locais_candidatos_n1))
+    @expression(model, custo_fixo_existente_n1, sum(S_custo_fixo_n1 for un1 in S_instalacoes_reais_n1))
+    @expression(model, custo_times_novos_n1, sum(fluxo_eq_n1[eq, un] * S_custo_equipe_n1[eq] for eq in S_equipes, un in S_n1))
+    @expression(model, custo_variavel_n1, sum(pop_atendida[d, eq,  un] * S_custo_variavel_n1[1] for d in S_Pontos_Demanda, eq in S_equipes, un in S_n1 if un in dominio_atr_n1[d]))
+    @expression(model, custo_total_n1, custo_fixo_novos_n1 +  custo_fixo_existente_n1 + custo_times_novos_n1 + custo_variavel_n1)
+    @constraint(model, custo_total_n1 <= 20000000)
+
+
+    #Fluxo de nivel Secundario!
+    @constraint(model, [n1 in S_n1], 
+                sum(X_n2[n1, n2] for n2 in dominio_atr_n2[n1]) == percent_n1_n2 * sum(pop_atendida[d, eq, n1] 
+                        for  eq in S_equipes, d in S_Pontos_Demanda if n1 in dominio_atr_n1[d]))
+
+
+    #Fluxo de nivel Terciario!
+    @constraint(model, [n2 in S_n2], 
+            sum(X_n3[n2, n3] for n3 in dominio_atr_n3[n2]) == 
+            percent_n2_n3 * sum(X_n2[n1, n2] for n1 in S_n1 if n2 in dominio_atr_n2[n1]))
+                    
+
+    #Funcao Objetivo:
+    @objective(model, Max, sum(pop_atendida[d, eq, un] * S_IVS[d] for d in S_Pontos_Demanda, eq in S_equipes, un in S_n1 if un in dominio_atr_n1[d] ))
+
+
+
+    optimize!(model)
+    obj = objective_value(model)
+    println(obj)
+    println(value(custo_total_n1))
+
+    #Populacao atendida por equipes - Populacao atual
+    # Criar um dicionário para armazenar as listas de resultados por equipe
+    resultados_por_equipe = Dict{Int, Vector{Tuple{Int, Int, Float64}}}()
+    diferencas_por_equipe = Dict{Int, Vector{Tuple{Int, Int, Float64}}}()
+
+    for eq in S_equipes
+        resultados_por_equipe[eq] = Vector{Tuple{Int, Int, Float64}}()
+        diferencas_por_equipe[eq] = Vector{Tuple{Int, Int, Float64}}()
+    end
+
+    for eq in S_equipes, i in indices.S_Pontos_Demanda, j in dominio_atr_n1[i]
+        if value(Aloc_[i,j]) == 1
+            valor_pop = value(pop_atendida[i, eq, j])
+            diferenca = S_Valor_Demanda[i] - valor_pop
+            # Salva (i, j, valor_pop) para cada equipe
+            push!(resultados_por_equipe[eq], (i, j, valor_pop))
+            # Salva (i, j, diferenca) para cada equipe
+            push!(diferencas_por_equipe[eq], (i, j, diferenca))
+        end
+    end
+
+    for eq in S_equipes
+        # Soma das diferenças para a equipe
+        soma_diferencas = sum(x[3] for x in diferencas_por_equipe[eq])
+        # Soma da população atendida para a equipe
+        soma_atendida = sum(x[3] for x in resultados_por_equipe[eq])
+        # Soma da demanda total para a equipe
+        soma_demanda = soma_atendida + soma_diferencas
+        # Calcular a porcentagem da população atendida
+        porcentagem_atendida = soma_demanda > 0 ? (soma_atendida / soma_demanda) * 100 : 0.0
+        println("Equipe: ", eq)
+        println("População atendida: ", soma_atendida)
+        println("Demanda total: ", soma_demanda)
+        println("Porcentagem da população atendida: ", round(porcentagem_atendida, digits=2), "%")
+    end
+
+
+    # Exemplo de como acessar os resultados:
+    # for eq in S_equipes
+    #     println("Equipe: ", eq)
+    #     println("População atendida (i, j, valor): ", resultados_por_equipe[eq])
+    #     println("Diferença demanda - atendida (i, j, valor): ", diferencas_por_equipe[eq])
+    # end
+
+end
