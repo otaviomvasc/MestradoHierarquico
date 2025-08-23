@@ -287,17 +287,26 @@ function calculate_flow_patients_domain(mun_data::MunicipalityData, data::Health
     Dist_Maxima_Demanda_N1 = mun_data.constantes.raio_maximo_n1
     Dist_Maxima_n1_n2 = mun_data.constantes.raio_maximo_n2
     Dist_Maxima_n2_n3 = mun_data.constantes.raio_maximo_n3
-
-
-    dominio_atr_n1 = Dict(d => [n for n in indices.S_n1 if S_Matriz_Dist.Matriz_Dist_n1[d,n] <= Dist_Maxima_Demanda_N1] 
-                         for d in indices.S_Pontos_Demanda)
-
-    dominio_atr_n2 = Dict(d => [n for n in indices.S_n2 if S_Matriz_Dist.Matriz_Dist_n2[d,n] <= Dist_Maxima_n1_n2] 
-                         for d in indices.S_n1)
-
-    dominio_atr_n3 = Dict(d => [n for n in indices.S_n3 if S_Matriz_Dist.Matriz_Dist_n3[d,n] <= Dist_Maxima_n2_n3] 
-                         for d in indices.S_n2)
     
+
+    # Recomenda-se limpar a variável (ou garantir que está criando um novo Dict) antes de reatribuí-la,
+    # especialmente se ela já existia e pode ter chaves antigas indesejadas.
+    # Aqui, garantimos que estamos criando novos dicionários do zero.
+
+    dominio_atr_n1 = Dict()
+    for d in indices.S_Pontos_Demanda
+        dominio_atr_n1[d] = [n for n in indices.S_n1 if S_Matriz_Dist.Matriz_Dist_n1[d, n] <= Dist_Maxima_Demanda_N1]
+    end
+
+    dominio_atr_n2 = Dict()
+    for d in indices.S_n1
+        dominio_atr_n2[d] = [n for n in indices.S_n2 if S_Matriz_Dist.Matriz_Dist_n2[d, n] <= Dist_Maxima_n1_n2]
+    end
+
+    dominio_atr_n3 = Dict()
+    for d in indices.S_n2
+        dominio_atr_n3[d] = [n for n in indices.S_n3 if S_Matriz_Dist.Matriz_Dist_n3[d, n] <= Dist_Maxima_n2_n3]
+    end
                             
     return dominio_atr_n1, dominio_atr_n2, dominio_atr_n3
 
@@ -335,6 +344,7 @@ function calculate_domains(mun_data::MunicipalityData, data::HealthcareData, S_M
         candidatos_n1_necessarios = []
         for cs in cs_atendidos_somente_candidatos
             candidatos_n1_necessarios = vcat(candidatos_n1_necessarios, dominio_atr_n1[cs] )
+            println(length(candidatos_n1_necessarios))
         end
 
         indices.S_Locais_Candidatos_n1 = unique(candidatos_n1_necessarios)
@@ -364,7 +374,7 @@ function calculate_domains(mun_data::MunicipalityData, data::HealthcareData, S_M
         dominio_atr_n1, dominio_atr_n2, dominio_atr_n3 = calculate_flow_patients_domain(mun_data::MunicipalityData, data::HealthcareData, S_Matriz_Dist::Matriz_Dist, indices::ModelIndices)
 
 
-
+        #[k for k in keys(dominio_atr_n3) if length(dominio_atr_n3[k]) == 0]
     end
 
 

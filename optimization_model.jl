@@ -520,7 +520,7 @@ function create_optimization_model_maximal_coverage(indices::ModelIndices, param
 
     S_quantidade_total_real_equipes = Vector{Int64}([sum(S_capacidade_CNES_n1[:,eq]) for eq in S_equipes])
     vls_eq = [100, 200, 300, 100, 20, 40, 50, 70, 90, 30, 11]
-    Orcamento_Maximo = 2000000
+    Orcamento_Maximo = 200000000
 
     model = Model(HiGHS.Optimizer)
     set_optimizer_attribute(model, "time_limit", 300.0)
@@ -533,7 +533,6 @@ function create_optimization_model_maximal_coverage(indices::ModelIndices, param
     var_abr_n1 = @variable(model, Abr_n1[n1 in S_n1], Bin) #Abertura unidades primárias
     fluxo_eq_n1 = @variable(model, eq_n1[eq in S_equipes, n1 in S_n1])
     var_pop_atendida = @variable(model, pop_atendida[d in S_Pontos_Demanda, eq in S_equipes, n1 in dominio_atr_n1[d]] >= 0) #Inserir aqui as demografias das populacoes!
-    var_equidade_minima = @variable(model, 0 <= var_equidade[eq in S_equipes] <= 1)
     #inicialmente vou somente encaminhar demanda para niveis superiore
     #Fluxo n2
     fluxo_n2 = @variable(model, X_n2[n1 in S_n1, n2 in dominio_atr_n2[n1]] >= 0)
@@ -547,9 +546,9 @@ function create_optimization_model_maximal_coverage(indices::ModelIndices, param
 
     #Todas as unidades devem ser alocadas numa UBS de referencia
     @constraint(model, [d in S_Pontos_Demanda], sum(Aloc_[d, n1] for n1 in dominio_atr_n1[d]) == 1)
-    @constraint(model, [d in S_Pontos_Demanda, eq in S_equipes, n1 in dominio_atr_n1[d]], var_pop_atendida[d, eq, n1] <= aloc_n1[d, n1] * S_Valor_Demanda[d])
+    @constraint(model, [d in S_Pontos_Demanda, eq in S_equipes, n1 in dominio_atr_n1[d]], var_pop_atendida[d, eq, n1] <= aloc_n1[d, n1] * maximum(S_Valor_Demanda))
     @constraint(model, [d in S_Pontos_Demanda, eq in S_equipes], sum(var_pop_atendida[d, eq, n1] for n1 in dominio_atr_n1[d]) <= S_Valor_Demanda[d]) #Sei que esta redundante, mas é um teste para nao ter GAP infinito no solver.
-    @constraint(model, [n1 in S_n1, eq in S_equipes], sum(var_pop_atendida[d, eq, n1] for d in S_Pontos_Demanda if n1 in dominio_atr_n1[d]) <= Cap_n1)
+    @constraint(model, [n1 in S_n1, eq in S_equipes], sum(var_pop_atendida[d, eq, n1] for d in S_Pontos_Demanda if n1 in dominio_atr_n1[d]) <= Cap_n1 * 10)
 
     #Abertura de unidades novas:
     @constraint(model, [d in S_Pontos_Demanda, s in dominio_candidatos_n1[d]], 
@@ -569,8 +568,8 @@ function create_optimization_model_maximal_coverage(indices::ModelIndices, param
     #sum(S_capacidade_CNES_n1[un, eq] + fluxo_eq_n1[eq,un] for un in S_instalacoes_reais_n1) <= S_quantidade_total_real_equipes[eq])
 
     #@constraint(model, [n1 in S_n1, eq in S_equipes],
-                       # sum(pop_atendida[d, eq, n1] for d in S_Pontos_Demanda if n1 in dominio_atr_n1[d]) 
-                       # >= var_equidade[eq] * sum(S_Valor_Demanda[d] for d in S_Pontos_Demanda if n1 in dominio_atr_n1[d]))
+                     #  sum(pop_atendida[d, eq, n1] for d in S_Pontos_Demanda if n1 in dominio_atr_n1[d]) 
+                      # >= var_equidade[eq] * sum(S_Valor_Demanda[d] for d in S_Pontos_Demanda if n1 in dominio_atr_n1[d]))
     #Limitacao de Orcamentos
 
     #@expression(model, custo_logistico_n1,  sum(X_n1[d, un, p] * Matriz_Dist_n1[d, un] * custo_deslocamento for d in S_Pontos_Demanda, un in S_n1, p in S_pacientes if un in dominio_atr_n1[d]))
@@ -580,6 +579,8 @@ function create_optimization_model_maximal_coverage(indices::ModelIndices, param
     @expression(model, custo_times_novos_n1, sum(fluxo_eq_n1[eq, un] * S_custo_equipe_n1[eq] for eq in S_equipes, un in S_n1))
     @expression(model, custo_variavel_n1, sum(pop_atendida[d, eq,  un] * S_custo_variavel_n1[1] for d in S_Pontos_Demanda, eq in S_equipes, un in S_n1 if un in dominio_atr_n1[d]))
     @expression(model, custo_total_n1, custo_fixo_novos_n1 +  custo_fixo_existente_n1 + custo_times_novos_n1 + custo_variavel_n1)
+
+
     @constraint(model, custo_total_n1 <= Orcamento_Maximo)
 
 
@@ -651,4 +652,75 @@ function create_optimization_model_maximal_coverage(indices::ModelIndices, param
     #     println("Diferença demanda - atendida (i, j, valor): ", diferencas_por_equipe[eq])
     # end
 
+end
+
+function diagnosticar_infeasibility(model, indices, mun_data, parameters)
+    println("=== DIAGNÓSTICO DE INFEASIBILITY ===")
+    
+    # 1. Verificar domínios vazios
+    println("\n1. Verificando domínios de atendimento:")
+    pontos_sem_cobertura = []
+    for d in indices.S_Pontos_Demanda
+        if isempty(parameters.S_domains.dominio_n1[d])
+            push!(pontos_sem_cobertura, d)
+        end
+    end
+    
+    if !isempty(pontos_sem_cobertura)
+        println("❌ ERRO: Pontos sem cobertura: $pontos_sem_cobertura")
+    else
+        println("✅ Todos os pontos têm cobertura")
+    end
+    
+    # 2. Verificar capacidade vs demanda
+    println("\n2. Verificando capacidade vs demanda:")
+    demanda_total = sum(mun_data.S_Valor_Demanda[d] for d in indices.S_Pontos_Demanda)
+    capacidade_total = sum(mun_data.constantes.Cap_n1)
+    println("Demanda total: $demanda_total")
+    println("Capacidade total: $capacidade_total")
+    
+    if demanda_total > capacidade_total
+        println("❌ ERRO: Demanda total excede capacidade total")
+    else
+        println("✅ Capacidade suficiente")
+    end
+    
+    # 3. Verificar orçamento
+    println("\n3. Verificando orçamento:")
+    custo_minimo = sum(mun_data.constantes.S_custo_fixo_n1)
+    println("Custo mínimo: $custo_minimo")
+    println("Orçamento máximo: 2000000")
+    
+    if custo_minimo > 2000000
+        println("❌ ERRO: Custo mínimo excede orçamento")
+    else
+        println("✅ Orçamento suficiente")
+    end
+    
+    # 4. Verificar restrições de equipes
+    println("\n4. Verificando restrições de equipes:")
+    problemas_equipes = 0
+    for eq in indices.S_equipes_n1
+        for un in indices.S_instalacoes_reais_n1
+            demanda_esperada = sum(mun_data.S_Valor_Demanda[d] for d in indices.S_Pontos_Demanda 
+                                 if un in parameters.S_domains.dominio_n1[d])
+            capacidade_necessaria = demanda_esperada * parameters.capacidade_maxima_por_equipe_n1[eq]
+            capacidade_disponivel = parameters.S_capacidade_CNES_n1[un, eq]
+            
+            if capacidade_necessaria > capacidade_disponivel
+                problemas_equipes += 1
+                if problemas_equipes <= 5  # Mostrar apenas os primeiros 5
+                    println("❌ Instalação $un, equipe $eq - Necessário: $capacidade_necessaria, Disponível: $capacidade_disponivel")
+                end
+            end
+        end
+    end
+    
+    if problemas_equipes > 0
+        println("❌ Total de problemas de equipes: $problemas_equipes")
+    else
+        println("✅ Restrições de equipes OK")
+    end
+    
+    return pontos_sem_cobertura, demanda_total > capacidade_total, custo_minimo > 2000000, problemas_equipes > 0
 end

@@ -19,14 +19,14 @@ function example_usage()
     mun_data = filter_municipality_data(data, municipio)
     
     #TODOs: Deixar mais facil a definicao dos rais criticos!
-    mun_data.constantes.raio_maximo_n1 = 3.0
+    mun_data.constantes.raio_maximo_n1 = 2.0
     #mun_data.constantes.raio_maximo_n2 = 20.0
     #mun_data.constantes.raio_maximo_n3 = 50.0
 
     # Calcular parâmetros do modelo
     println("Calculando parâmetros do modelo...")
     indices, parameters = calculate_model_parameters(mun_data, data)
-    println("Criando modelo de cobertura máxima usando o builder...")
+    println("Criando modelo de cobertura máxima")
     create_optimization_model_maximal_coverage(indices, parameters, mun_data)
 
     results = extract_results(builder_oficial.model, builder_oficial.indices)
