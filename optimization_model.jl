@@ -740,58 +740,75 @@ function create_optimization_model_maximal_coverage_per_equipes(indices::ModelIn
     pontos_sem_cobertura = [d for d in S_Pontos_Demanda if isempty(dominio_atr_n1[d])]
 
     model = Model(HiGHS.Optimizer)
-    set_optimizer_attribute(model, "time_limit", 1000.0)
-    set_optimizer_attribute(model, "mip_rel_gap", 0.1) 
-    #Variaveis
+    set_optimizer_attribute(model, "time_limit", 3600.0)
+    # --- variáveis (mantendo seus nomes) ---
+    @variable(model, Atend_D_E_Ubs[d in S_Pontos_Demanda,
+                                eq in S_Equipes_n1,
+                                n1 in dominio_atr_n1[d]], Bin)
 
-    #ALocacoes
-    Aloc_D_CS_eq_Ubs = @variable(model, Aloc_D_CS_eq_Ubs[d in S_Pontos_Demanda, eq in S_Equipes_n1, n1 in dominio_atr_n1[d]] , Bin)
-    Aloc_D_Ubs = @variable(model, Aloc_D_Ubs[d in S_Pontos_Demanda, n1 in dominio_atr_n1[d]], Bin)
-    Aloc_eq_UBS = @variable(model, Aloc_eq_Ubs[eq in S_Equipes_n1, n1 in S_n1], Bin)
+    @variable(model, Aloc_E_Ubs[eq in S_Equipes_n1, n1 in S_n1], Bin)
 
-    #Abertura de Equipes!
-    var_abr_n1 = @variable(model, Abr_n1[n1 in S_n1], Bin)
-    var_eqs_extras = @variable(model, Eqs_extas[eq in S_equipes_candidatas] >= 0) #Abertura de equipes candidatas gera custo de contratacao!
-    #Vou optar por criar quantidade de equipes novas!
+    @variable(model, Aloc_Ubs[n1 in S_n1], Bin)
 
-    #Populacao atendida!
-    var_pop_atendida = @variable(model, pop_atendida[d in S_Pontos_Demanda, eq in S_Equipes_n1, n1 in dominio_atr_n1[d]]) 
+    # agora pop_atendida é >= 0 (use Int se quiser contar pessoas inteiras)
+    @variable(model, pop_atendida[d in S_Pontos_Demanda,
+                                eq in S_Equipes_n1,
+                                n1 in dominio_atr_n1[d]] >= 0)
 
+    # (suas variáveis de abertura / equipes extras seguem iguais)
+    @variable(model, var_abr_n1[n1 in S_n1], Bin)
+    @variable(model, var_eqs_extras[eq in S_equipes_candidatas] >= 0, Int)
+    
 
-    #Restricoes de Alocacao!
-    #Demanda - UBS
-    @constraint(model, [d in S_Pontos_Demanda], sum(Aloc_D_Ubs[d, n1] for n1 in dominio_atr_n1[d]) == 1)
-
-    #Uma equipe PODE estar alocada em apenas UBS - Se alocar equipe nova paga!
-    @constraint(model, [eq in S_Equipes_n1], sum(Aloc_eq_UBS[eq, n1] for n1 in S_n1) <= 1)
-
-    #Cada demanda precisa ser atendida por uma equipe em uma unidade apenas!
-    @constraint(model, [d in S_Pontos_Demanda], sum(Aloc_D_CS_eq_Ubs[d, eq, n1] for eq in S_Equipes_n1, n1 in dominio_atr_n1[d]) == 1)
-
-    #So posso atribuir uma demanda a uma unidade se a variavel de alocacao for 1.
-    @constraint(model, [d in S_Pontos_Demanda, n1 in dominio_atr_n1[d]], sum(Aloc_D_CS_eq_Ubs[d, eq, n1] for eq in S_Equipes_n1) == Aloc_D_Ubs[d, n1])
-
-    #Uma equipe so pode atender demandas na unidade em que ela esta alocada
-    @constraint(model, [d in S_Pontos_Demanda, eq in S_Equipes_n1,  n1 in dominio_atr_n1[d]], Aloc_D_CS_eq_Ubs[d, eq, n1] <= Aloc_eq_UBS[eq, n1])
-
-    #Quantidade de demanda atendida 
-    @constraint(model, [d in S_Pontos_Demanda, eq in S_Equipes_n1,  n1 in dominio_atr_n1[d]], pop_atendida[d, eq, n1] <= Aloc_D_CS_eq_Ubs[d, eq, n1] * S_Valor_Demanda[d])
-
-    #Capacidade das equipes!
-    @constraint(model, [eq in S_Equipes_n1], sum(pop_atendida[d, eq, n1] for d in S_Pontos_Demanda, n1 in dominio_atr_n1[d]) <= S_cap_equipes_final[eq])
-
-    #Abertura de novas unidades
-    @constraint(model, [d in S_Pontos_Demanda, s in dominio_candidatos_n1[d]], Aloc_D_Ubs[d, s] <= var_abr_n1[s])
-
-    #Abertura de novas equipes!
-    @constraint(model, [eq in S_equipes_candidatas, n1 in S_n1], Aloc_eq_UBS[eq, n1] <= var_eqs_extras[eq])
+    # um ponto pode ser atendido por no máximo UMA equipe/UBS
+    @constraint(model, [d in S_Pontos_Demanda],
+        sum(Atend_D_E_Ubs[d, eq, n1] for eq in S_Equipes_n1, n1 in dominio_atr_n1[d]) <= 1)
 
 
-    @objective(model, Max, sum(pop_atendida[d, eq, un] * S_IVS[d] for d in S_Pontos_Demanda, eq in S_Equipes_n1, un in S_n1 if un in dominio_atr_n1[d])) 
+    @constraint(model, [d in S_Pontos_Demanda, eq in S_Equipes_n1, n1 in dominio_atr_n1[d]],
+        Atend_D_E_Ubs[d, eq, n1] <= Aloc_E_Ubs[eq, n1])
 
 
+    @constraint(model, [d in S_Pontos_Demanda, eq in S_Equipes_n1, n1 in dominio_atr_n1[d]],
+        pop_atendida[d, eq, n1] <= S_Valor_Demanda[d] * Atend_D_E_Ubs[d, eq, n1])
+
+    # (5) opcional: também é conveniente forçar pop_atendida <= S_Valor_Demanda (redundante, mas claro)
+    @constraint(model, [d in S_Pontos_Demanda, eq in S_Equipes_n1, n1 in dominio_atr_n1[d]],
+        pop_atendida[d, eq, n1] <= S_Valor_Demanda[d])
+
+    # (6) capacidade por equipe usando pop_atendida
+    @constraint(model, [eq in S_Equipes_n1],
+        sum(pop_atendida[d, eq, n1] for d in S_Pontos_Demanda, n1 in dominio_atr_n1[d]) <= S_cap_equipes_final[eq])
+
+    # (7) abertura de UBS / equipes (mantém suas regras)
+    @constraint(model, [d in S_Pontos_Demanda, s in dominio_candidatos_n1[d]], 
+                        sum(Atend_D_E_Ubs[d, s] for eq in S_Equipes_n1) <= var_abr_n1[s] * 100000)
+
+
+    @constraint(model, [eq in S_equipes_candidatas, n1 in S_n1],
+        Aloc_E_Ubs[eq, n1] <= var_eqs_extras[eq])
+    
+    # ---------------------------------------------------------
+    @objective(model, Max,
+    sum(pop_atendida[d, eq, un] * S_IVS[d]
+        for d in S_Pontos_Demanda, eq in S_Equipes_n1, un in S_n1 if un in dominio_atr_n1[d]))
+    # Otimizar
     optimize!(model)
-
+    
+    println("Objetivo = ", objective_value(model))
+    for d in S_Pontos_Demanda, e in S_Equipes_n1, u in dominio_atr_n1[d]
+        if value(Atend_D_E_Ubs[d,e,u]) > 0.5
+            println("Demanda $d atendida pela equipe $e na UBS $u")
+        end
+    end
+    for u in S_n1
+        if value(Aloc_Ubs[u]) > 0.5
+            println("UBS aberta: $u")
+        end
+    end 
+    for e in S_equipes_candidatas
+        println("Equipes_extra[$e] = ", value(Equipes_extra[e]))
+    end
 
 end
 
