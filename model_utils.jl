@@ -32,6 +32,8 @@ function create_model_indices(mun_data::MunicipalityData)::ModelIndices
     S_equipes_n1 = collect(1:length(unique_cbo_n1))
     S_equipes_n2 = collect(1:length(unique_cbo_n2))
     S_equipes_n3 = collect(1:length(unique_cbo_n3))
+
+    mun_data.equipes_primario_v2
     
     # Indices de pontos de demanda
     S_pontos_demanda = collect(1:qntd_pontos_demanda)

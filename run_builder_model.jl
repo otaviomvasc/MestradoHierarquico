@@ -27,8 +27,10 @@ function example_usage()
     println("Calculando parâmetros do modelo...")
     indices, parameters = calculate_model_parameters(mun_data, data)
     println("Criando modelo de cobertura máxima")
-    create_optimization_model_maximal_coverage(indices, parameters, mun_data)
+    #create_optimization_model_maximal_coverage(indices, parameters, mun_data)
+    create_optimization_model_maximal_coverage_per_equipes(indices, parameters, mun_data)
 
+    
     results = extract_results(builder_oficial.model, builder_oficial.indices)
     version_result = "resultados_otimizacao_builder_cenario_4"
     println("Salvando resultados e dados...")

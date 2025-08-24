@@ -654,6 +654,148 @@ function create_optimization_model_maximal_coverage(indices::ModelIndices, param
 
 end
 
+
+function create_optimization_model_maximal_coverage_per_equipes(indices::ModelIndices, parameters::ModelParameters, mun_data::MunicipalityData)::Model
+    S_n1 = indices.S_n1
+    S_n2 = indices.S_n2
+    S_n3 = indices.S_n3
+    S_locais_candidatos_n1 = indices.S_Locais_Candidatos_n1
+    S_instalacoes_reais_n1 = indices.S_instalacoes_reais_n1
+    S_instalacoes_reais_n2 = indices.S_instalacoes_reais_n2
+    S_instalacoes_reais_n3 = indices.S_instalacoes_reais_n3
+    S_Pontos_Demanda = indices.S_Pontos_Demanda
+    S_equipes = indices.S_equipes_n1
+    S_equipes_n2 = indices.S_equipes_n2
+    S_equipes_n3 = indices.S_equipes_n3
+    S_pacientes =  mun_data.constantes.S_pacientes
+    S_Valor_Demanda = mun_data.S_Valor_Demanda
+    porcentagem_populacao = mun_data.constantes.porcentagem_populacao
+    S_IVS = parameters.IVS
+
+    dominio_atr_n1 = parameters.S_domains.dominio_n1
+
+    #TODO: Retomar workarround de locais candidatos que atendam os pontos sem nenhum opcao no raio critico!
+    dominio_candidatos_n1 = Dict(d => [s for s in dominio_atr_n1[d] if s in S_locais_candidatos_n1] for d in keys(dominio_atr_n1))
+
+    dominio_atr_n2 = parameters.S_domains.dominio_n2
+    dominio_atr_n3 = parameters.S_domains.dominio_n3
+    
+    percent_n1_n2 = mun_data.constantes.percent_n1_n2
+    percent_n2_n3 = mun_data.constantes.percent_n2_n3
+
+    Cap_n1 = mun_data.constantes.Cap_n1
+    Cap_n2 = mun_data.constantes.Cap_n2
+    Cap_n3 = mun_data.constantes.Cap_n3
+
+
+    capacidade_maxima_por_equipe_n1 = parameters.capacidade_maxima_por_equipe_n1
+    capacidade_maxima_por_equipe_n2 = parameters.S_eq_por_paciente_n2
+    capacidade_maxima_por_equipe_n3 = parameters.S_eq_por_paciente_n3
+
+    S_custo_equipe_n1 = parameters.S_custo_equipe_n1
+    S_custo_equipe_n2 = parameters.S_custo_equipe_n2
+    S_custo_equipe_n3 = parameters.S_custo_equipe_n3
+
+    S_capacidade_CNES_n1 = parameters.S_capacidade_CNES_n1
+    S_capacidade_CNES_n2 = parameters.S_capacidade_CNES_n2
+    S_capacidade_CNES_n3 = parameters.S_capacidade_CNES_n3
+
+    Matriz_Dist_n1 = parameters.S_Matriz_Dist.Matriz_Dist_n1
+    Matriz_Dist_n2 = parameters.S_Matriz_Dist.Matriz_Dist_n2
+    Matriz_Dist_n3 = parameters.S_Matriz_Dist.Matriz_Dist_n3
+
+    custo_deslocamento = mun_data.constantes.custo_transporte  
+    Custo_abertura_n1 = mun_data.constantes.custo_abertura_n1
+    Custo_abertura_n2 = mun_data.constantes.custo_abertura_n2
+    Custo_abertura_n3 = mun_data.constantes.custo_abertura_n3
+
+    S_custo_variavel_n1 = mun_data.constantes.S_custo_variavel_n1
+    S_custo_variavel_n2 = mun_data.constantes.S_custo_variavel_n2
+    S_custo_variavel_n3 = mun_data.constantes.S_custo_variavel_n3
+
+    S_custo_fixo_n1 = mun_data.constantes.S_custo_fixo_n1
+    S_custo_fixo_n2 = mun_data.constantes.S_custo_fixo_n2
+    S_custo_fixo_n3 = mun_data.constantes.S_custo_fixo_n3
+
+    S_quantidade_total_real_equipes = Vector{Int64}([sum(S_capacidade_CNES_n1[:,eq]) for eq in S_equipes])
+    vls_eq = [100, 200, 300, 100, 20, 40, 50, 70, 90, 30, 11]
+    Orcamento_Maximo = 200000000
+
+
+    #Novo metodo das equipes
+    eqs_ESF = [23, 70, 76, 72, 22, 1]
+    equipes_ESF_filtradas = filter(row -> row.TP_EQUIPE in eqs_ESF && row.ST_ATIVA == 1, mun_data.equipes_primario_v2)
+    
+    # Garantir ordem correspondente entre códigos e capacidades
+    # Opção 1: Usar vetores paralelos (mais simples)
+    CNES_Equipes_n1 = [row.CO_EQUIPE for row in eachrow(equipes_ESF_filtradas)] #Lista com codigo de cada equipe!
+    Cap_Equipes_n1 = [row.PARAMETRO_CADASTRAL for row in eachrow(equipes_ESF_filtradas)] #Capacidade da equipe!
+    S_qntd_Equipes_reais = length(CNES_Equipes_n1)
+    S_Equipes_Reais_n1 = collect(1:S_qntd_Equipes_reais)
+    S_equipes_candidatas = collect(S_qntd_Equipes_reais + 1: S_qntd_Equipes_reais + 30)
+    S_Equipes_n1 = collect(1: S_qntd_Equipes_reais + 30)
+    S_cap_equipes_candidadatas = fill(3000, length(S_equipes_candidatas))
+    S_cap_equipes_final = vcat(Cap_Equipes_n1, S_cap_equipes_candidadatas)
+
+    pontos_sem_cobertura = [d for d in S_Pontos_Demanda if isempty(dominio_atr_n1[d])]
+
+    model = Model(HiGHS.Optimizer)
+    set_optimizer_attribute(model, "time_limit", 1000.0)
+    set_optimizer_attribute(model, "mip_rel_gap", 0.1) 
+    #Variaveis
+
+    #ALocacoes
+    Aloc_D_CS_eq_Ubs = @variable(model, Aloc_D_CS_eq_Ubs[d in S_Pontos_Demanda, eq in S_Equipes_n1, n1 in dominio_atr_n1[d]] , Bin)
+    Aloc_D_Ubs = @variable(model, Aloc_D_Ubs[d in S_Pontos_Demanda, n1 in dominio_atr_n1[d]], Bin)
+    Aloc_eq_UBS = @variable(model, Aloc_eq_Ubs[eq in S_Equipes_n1, n1 in S_n1], Bin)
+
+    #Abertura de Equipes!
+    var_abr_n1 = @variable(model, Abr_n1[n1 in S_n1], Bin)
+    var_eqs_extras = @variable(model, Eqs_extas[eq in S_equipes_candidatas] >= 0) #Abertura de equipes candidatas gera custo de contratacao!
+    #Vou optar por criar quantidade de equipes novas!
+
+    #Populacao atendida!
+    var_pop_atendida = @variable(model, pop_atendida[d in S_Pontos_Demanda, eq in S_Equipes_n1, n1 in dominio_atr_n1[d]]) 
+
+
+    #Restricoes de Alocacao!
+    #Demanda - UBS
+    @constraint(model, [d in S_Pontos_Demanda], sum(Aloc_D_Ubs[d, n1] for n1 in dominio_atr_n1[d]) == 1)
+
+    #Uma equipe PODE estar alocada em apenas UBS - Se alocar equipe nova paga!
+    @constraint(model, [eq in S_Equipes_n1], sum(Aloc_eq_UBS[eq, n1] for n1 in S_n1) <= 1)
+
+    #Cada demanda precisa ser atendida por uma equipe em uma unidade apenas!
+    @constraint(model, [d in S_Pontos_Demanda], sum(Aloc_D_CS_eq_Ubs[d, eq, n1] for eq in S_Equipes_n1, n1 in dominio_atr_n1[d]) == 1)
+
+    #So posso atribuir uma demanda a uma unidade se a variavel de alocacao for 1.
+    @constraint(model, [d in S_Pontos_Demanda, n1 in dominio_atr_n1[d]], sum(Aloc_D_CS_eq_Ubs[d, eq, n1] for eq in S_Equipes_n1) == Aloc_D_Ubs[d, n1])
+
+    #Uma equipe so pode atender demandas na unidade em que ela esta alocada
+    @constraint(model, [d in S_Pontos_Demanda, eq in S_Equipes_n1,  n1 in dominio_atr_n1[d]], Aloc_D_CS_eq_Ubs[d, eq, n1] <= Aloc_eq_UBS[eq, n1])
+
+    #Quantidade de demanda atendida 
+    @constraint(model, [d in S_Pontos_Demanda, eq in S_Equipes_n1,  n1 in dominio_atr_n1[d]], pop_atendida[d, eq, n1] <= Aloc_D_CS_eq_Ubs[d, eq, n1] * S_Valor_Demanda[d])
+
+    #Capacidade das equipes!
+    @constraint(model, [eq in S_Equipes_n1], sum(pop_atendida[d, eq, n1] for d in S_Pontos_Demanda, n1 in dominio_atr_n1[d]) <= S_cap_equipes_final[eq])
+
+    #Abertura de novas unidades
+    @constraint(model, [d in S_Pontos_Demanda, s in dominio_candidatos_n1[d]], Aloc_D_Ubs[d, s] <= var_abr_n1[s])
+
+    #Abertura de novas equipes!
+    @constraint(model, [eq in S_equipes_candidatas, n1 in S_n1], Aloc_eq_UBS[eq, n1] <= var_eqs_extras[eq])
+
+
+    @objective(model, Max, sum(pop_atendida[d, eq, un] * S_IVS[d] for d in S_Pontos_Demanda, eq in S_Equipes_n1, un in S_n1 if un in dominio_atr_n1[d])) 
+
+
+    optimize!(model)
+
+
+end
+
+
 function diagnosticar_infeasibility(model, indices, mun_data, parameters)
     println("=== DIAGNÓSTICO DE INFEASIBILITY ===")
     

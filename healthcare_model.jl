@@ -32,6 +32,7 @@ mutable struct HealthcareData
     df_equipes_terciario::DataFrame
     df_necessidades_primario::DataFrame
     df_necessidades_sec_ter::DataFrame
+    df_equipes_primario_v2::DataFrame
 end
 
 mutable struct ModelConstants
@@ -71,7 +72,7 @@ end
 
 mutable struct MunicipalityData
     nome::String # CD_SETOR => demanda
-    S_Valor_Demanda::Vector{Float64}
+    S_Valor_Demanda::Vector{Int}
     coordenadas::Vector{Tuple{Float64, Float64}}
     S_cnes_primario_referencia_real::Vector{Int64}
     unidades_n1::DataFrame
@@ -82,6 +83,7 @@ mutable struct MunicipalityData
     equipes_n3::DataFrame
     constantes::ModelConstants
     IVS::Vector{Float64}
+    equipes_primario_v2::DataFrame
     
 end
 
@@ -128,7 +130,8 @@ function load_healthcare_data(base_path::String)::HealthcareData
         DataFrame(XLSX.readtable(joinpath(base_path, "df_equipes_secundario.xlsx"), "Sheet1")),
         DataFrame(XLSX.readtable(joinpath(base_path, "df_equipes_terciario.xlsx"), "Sheet1")),
         DataFrame(XLSX.readtable(joinpath(base_path, "equipes_Primario_FIM _COMPLETO.xlsb.xlsx"), "necessidades_Primario")),
-        DataFrame(XLSX.readtable(joinpath(base_path, "equipes_Primario_FIM _COMPLETO.xlsb.xlsx"), "Necessidades_Sec_ter"))
+        DataFrame(XLSX.readtable(joinpath(base_path, "equipes_Primario_FIM _COMPLETO.xlsb.xlsx"), "Necessidades_Sec_ter")),
+        DataFrame(XLSX.readtable(joinpath(base_path, "EQUIPES_NAO_PROCESSADO_MAPA_SUS.xlsx"), "Sheet1"))
     )
 end
 
@@ -144,6 +147,8 @@ function filter_municipality_data(data::HealthcareData, municipio::String)::Muni
     c_coords = [(row.Latitude, row.Longitude) for row in eachrow(df_m)]
     S_cnes_primario_referencia_real = [row["UBS_ref"] for row in eachrow(df_m)]
     IVS = [row["IVS"] for row in eachrow(df_m)]
+    df_eqps_v2 = data.df_equipes_primario_v2[data.df_equipes_primario_v2.NO_MUNICIPIO .== muncipio_upper, :]
+
     # Quando coletar valores de demanda
 
     # Definição das constantes do modelo - Dados que precisamos melhorar!.
@@ -216,7 +221,8 @@ function filter_municipality_data(data::HealthcareData, municipio::String)::Muni
             lista_doencas,
             porcentagem_populacao
         ),
-        IVS
+        IVS, 
+        df_eqps_v2
     )
 end
 
