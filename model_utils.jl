@@ -1,3 +1,5 @@
+using DataFrames
+
 function create_model_indices(mun_data::MunicipalityData)::ModelIndices
     # Calcular quantidades
     qntd_n1_real = nrow(mun_data.unidades_n1)
@@ -25,11 +27,12 @@ function create_model_indices(mun_data::MunicipalityData)::ModelIndices
     
     # Criar conjuntos de equipes
     #TOOD: Salvar esse dado tambem!
-    unique_cbo_n1 = sort(unique(mun_data.equipes_n1.profissional_cbo))
+    #unique_cbo_n1 = sort(unique(mun_data.equipes_n1.profissional_cbo))
     unique_cbo_n2 = sort(unique(mun_data.equipes_n2.profissional_cbo))
     unique_cbo_n3 = sort(unique(mun_data.equipes_n3.profissional_cbo))
     
-    S_equipes_n1 = collect(1:length(unique_cbo_n1))
+    #S_equipes_n1 = collect(1:length(unique_cbo_n1))
+    S_equipes_n1 = [1] #Equipes de saude da familia!
     S_equipes_n2 = collect(1:length(unique_cbo_n2))
     S_equipes_n3 = collect(1:length(unique_cbo_n3))
 
@@ -232,16 +235,45 @@ function calculate_equipment_parameters(mun_data::MunicipalityData, data::Health
     }
     
     # Nível 1 (Primário)
-    lista_equipes_n1 = Vector{String}(unique(mun_data.equipes_n1.profissional_cbo))
+
+    eqs_ESF = [23, 70, 76, 72, 22, 1]
+    
+
+    # Filtra as equipes ESF ativas
+    equipes_ESF_filtradas = filter(row -> row.TP_EQUIPE in eqs_ESF && row.ST_ATIVA == 1, mun_data.equipes_primario_v2)
+
+    # Faz o groupby por CO_CNES e conta a quantidade de CO_EQUIPE por CNES
+    df_equipes_ESF = DataFrame(equipes_ESF_filtradas)
+    equipes_por_cnes = combine(groupby(df_equipes_ESF, :CO_CNES), nrow => :qtd_equipes)
+    
+    # Garantir ordem correspondente entre códigos e capacidades
+    # Opção 1: Usar vetores paralelos (mais simples)#Lista com codigo de cada equipe!
+    CNES_UBS = [row.CO_CNES for row in eachrow(equipes_por_cnes)]
+    Cap_Equipes_n1 = [row.qtd_equipes for row in eachrow(equipes_por_cnes)]
+    
+    lista_equipes_n1 = Vector{String}(["MEDICO_FAMILIA"])
+
     capacidade_n1, custo_n1 = calculate_team_parameters(
         lista_equipes_n1, 
         data.df_necessidades_primario
     )
-    matriz_cap_n1 = calculate_equipment_capacity_matrix(
-        mun_data.unidades_n1,
-        mun_data.equipes_n1,
-        lista_equipes_n1
-    )
+    #matriz_cap_n1 = calculate_equipment_capacity_matrix(
+      #  mun_data.unidades_n1,
+       # mun_data.equipes_n1,
+       # lista_equipes_n1
+    #)
+    # Cria uma coluna "linha_unidades_n1" que indica a linha em mun_data.unidades_n1 onde o CO_CNES aparece na coluna cnes
+    equipes_por_cnes.linha_unidades_n1 = [
+        findfirst(x -> x == cnes, mun_data.unidades_n1.cnes) === nothing ? -1 : findfirst(x -> x == cnes, mun_data.unidades_n1.cnes)
+        for cnes in equipes_por_cnes.CO_CNES
+    ]
+    # Ordena o DataFrame equipes_por_cnes pela coluna linha_unidades_n1
+    equipes_por_cnes_sorted = sort(equipes_por_cnes, :linha_unidades_n1)
+
+    # Cria uma matriz (coluna única) com os valores ordenados da coluna qtd_equipes
+    matriz_cap_n1 = reshape(collect(equipes_por_cnes_sorted.qtd_equipes), :, 1)
+    #preciso descobrir qual posicao do vetor e cada CNES!
+    
     
     # Nível 2 (Secundário)
     lista_equipes_n2 = Vector{String}(unique(mun_data.equipes_n2.profissional_cbo))
@@ -420,7 +452,9 @@ function create_model_parameters(mun_data::MunicipalityData, data::HealthcareDat
         matriz_cap_n3,
         S_Matriz_Dist,
         dominios_model, 
-        IVS
+        IVS,
+        3000000.0,  # orcamento_maximo - valor padrão
+        10.0        # ponderador_Vulnerabilidade - valor padrão
     )
 end
 

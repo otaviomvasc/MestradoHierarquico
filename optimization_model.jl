@@ -10,6 +10,37 @@ struct OptimizationResults
     equipes::Dict{Tuple{Int,Int,Int}, Float64}  # (nivel,unidade,tipo_equipe) => quantidade
 end
 
+# Estrutura para armazenar resultados detalhados da população atendida
+struct PopulationResults
+    setor::String
+    ponto_demanda::Int
+    populacao_total::Int
+    populacao_atendida::Float64
+    ubs_alocada::Int
+    coord_demanda_lat::Float64
+    coord_demanda_lon::Float64
+    coord_ubs_lat::Float64
+    coord_ubs_lon::Float64
+    ivs::Float64
+end
+
+# Estrutura para armazenar resultados do fluxo de equipes
+struct TeamFlowResults
+    ubs::Int
+    quantidade_equipes_cnes::Float64
+    valor_variavel_fluxo::Float64
+    tipo_ubs::String  # "Real" ou "Candidata"
+end
+
+# Estrutura para armazenar resultados dos custos
+struct CostResults
+    tipo_custo::String
+    nivel::String
+    valor::Float64
+    percentual::Float64
+    descricao::String
+end
+
 function extract_results(model::Model, indices::ModelIndices)::OptimizationResults
     # Extrair valores das variáveis
 
@@ -116,7 +147,464 @@ function extract_results(model::Model, indices::ModelIndices)::OptimizationResul
         fluxos,
         equipes
     )
-end 
+end
+
+"""
+Extrai os resultados da variável pop_atendida e retorna uma lista de PopulationResults
+"""
+function extract_population_results(model::Model, indices::ModelIndices, mun_data::MunicipalityData)::Vector{PopulationResults}
+    println("Extraindo resultados da população atendida...")
+    
+    # Verificar se a variável pop_atendida existe no modelo
+    if !haskey(model.obj_dict, :pop_atendida)
+        error("Variável pop_atendida não encontrada no modelo!")
+    end
+    
+    # Extrair valores da variável pop_atendida
+    pop_atendida_values = value.(model[:pop_atendida])
+    
+    # Extrair valores da variável de alocação
+    aloc_values = value.(model[:Aloc_])
+    
+    results = PopulationResults[]
+    
+    # Para cada ponto de demanda
+    for d in indices.S_Pontos_Demanda
+        # População total do ponto de demanda
+        setor = mun_data.Setor_Censitario[d]
+        populacao_total = mun_data.S_Valor_Demanda[d]
+        
+        # Coordenadas do ponto de demanda
+        coord_demanda = mun_data.coordenadas[d]
+        coord_demanda_lat = coord_demanda[1]
+        coord_demanda_lon = coord_demanda[2]
+        ivs = parameters.IVS[d]
+
+        
+        # Encontrar UBS alocada para este ponto de demanda
+        ubs_alocada = -1
+        for n1 in indices.S_n1
+            if haskey(aloc_values, (d, n1)) && aloc_values[d, n1] > 0.5
+                ubs_alocada = n1
+                break
+            end
+        end
+        
+        # Calcular população total atendida (soma de todas as equipes)
+        populacao_atendida_total = 0.0
+        for eq in indices.S_equipes_n1
+            for n1 in indices.S_n1
+                if haskey(pop_atendida_values, (d, eq, n1)) && pop_atendida_values[d, eq, n1] > 0
+                    populacao_atendida_total += pop_atendida_values[d, eq, n1]
+                end
+            end
+        end
+        
+        # Coordenadas da UBS alocada
+        coord_ubs_lat = 0.0
+        coord_ubs_lon = 0.0
+        
+        if ubs_alocada > 0
+            if ubs_alocada <= length(mun_data.unidades_n1.cnes)
+                # É uma UBS real
+                ubs_row = mun_data.unidades_n1[ubs_alocada, :]
+                coord_ubs_lat = ubs_row.latitude
+                coord_ubs_lon = ubs_row.longitude
+            else
+                # É uma UBS candidata (localizada no ponto de demanda)
+                candidata_idx = ubs_alocada - length(mun_data.unidades_n1.cnes)
+                if candidata_idx <= length(mun_data.coordenadas)
+                    coord_ubs_lat = mun_data.coordenadas[candidata_idx][1]
+                    coord_ubs_lon = mun_data.coordenadas[candidata_idx][2]
+                end
+            end
+        end
+        
+        # Criar resultado para este ponto de demanda
+        result = PopulationResults(
+            setor,
+            d,                          # ponto_demanda
+            populacao_total,            # populacao_total
+            populacao_atendida_total,   # populacao_atendida
+            ubs_alocada,                # ubs_alocada
+            coord_demanda_lat,          # coord_demanda_lat
+            coord_demanda_lon,          # coord_demanda_lon
+            coord_ubs_lat,              # coord_ubs_lat
+            coord_ubs_lon,
+            ivs               # coord_ubs_lon
+        )
+        
+        push!(results, result)
+    end
+    
+    println("Extraídos resultados para ", length(results), " pontos de demanda")
+    return results
+end
+
+"""
+Gera uma tabela Excel com os resultados da população atendida
+"""
+function export_population_results_to_excel(population_results::Vector{PopulationResults}, 
+                                          filename::String="resultados_populacao_atendida.xlsx")
+    println("Gerando tabela Excel: ", filename)
+    
+    # Criar DataFrame com os resultados
+    df = DataFrame(
+        "Setor" => [r.setor for r in population_results], 
+        "Ponto_Demanda" => [r.ponto_demanda for r in population_results],
+        "Populacao_Total" => [r.populacao_total for r in population_results],
+        "Populacao_Atendida" => [r.populacao_atendida for r in population_results],
+        "UBS_Alocada" => [r.ubs_alocada for r in population_results],
+        "Lat_Demanda" => [r.coord_demanda_lat for r in population_results],
+        "Lon_Demanda" => [r.coord_demanda_lon for r in population_results],
+        "Lat_UBS" => [r.coord_ubs_lat for r in population_results],
+        "Lon_UBS" => [r.coord_ubs_lon for r in population_results], 
+        "IVS" => [r.ivs for r in population_results]
+    )
+    
+    # Adicionar coluna de percentual de atendimento
+    #df[!, "Percentual_Atendimento"] = [round(r.populacao_atendida / r.populacao_total * 100, digits=2) for r in population_results]
+    
+    # Salvar no Excel
+    XLSX.writetable(filename, df)
+    
+    println("Tabela salva com sucesso!")
+    println("Resumo dos resultados:")
+    println("  - Total de pontos de demanda: ", nrow(df))
+    println("  - População total: ", sum(df.Populacao_Total))
+    println("  - População atendida: ", round(sum(df.Populacao_Atendida), digits=0))
+    #println("  - Percentual médio de atendimento: ", round(mean(df.Percentual_Atendimento), digits=2), "%")
+    
+    return df
+end
+
+"""
+Extrai os resultados dos custos do modelo e retorna uma lista de CostResults
+"""
+function extract_cost_results(model::Model)::Vector{CostResults}
+    println("Extraindo resultados dos custos...")
+    
+    results = CostResults[]
+    
+    # Calcular custo total para calcular percentuais
+    custo_total = 0.0
+    
+    # Custos do nível 1 (Primário)
+    custo_fixo_novos_n1 = value(model[:custo_fixo_novos_n1])
+    custo_times_novos_n1 = value(model[:custo_times_novos_n1])
+    custo_variavel_n1 = value(model[:custo_variavel_n1])
+    
+    # Custos do nível 2 (Secundário) - se existirem
+    custo_logistico_n2 = 0.0
+    custo_fixo_existente_n2 = 0.0
+    custo_times_novos_n2 = 0.0
+    custo_variavel_n2 = 0.0
+    
+    if haskey(model.obj_dict, :custo_logistico_n2)
+        custo_logistico_n2 = value(model[:custo_logistico_n2])
+    end
+    if haskey(model.obj_dict, :custo_fixo_existente_n2)
+        custo_fixo_existente_n2 = value(model[:custo_fixo_existente_n2])
+    end
+    if haskey(model.obj_dict, :custo_times_novos_n2)
+        custo_times_novos_n2 = value(model[:custo_times_novos_n2])
+    end
+    if haskey(model.obj_dict, :custo_variavel_n2)
+        custo_variavel_n2 = value(model[:custo_variavel_n2])
+    end
+    
+    # Custos do nível 3 (Terciário) - se existirem
+    custo_logistico_n3 = 0.0
+    custo_fixo_existente_n3 = 0.0
+    custo_times_novos_n3 = 0.0
+    custo_variavel_n3 = 0.0
+    
+    if haskey(model.obj_dict, :custo_logistico_n3)
+        custo_logistico_n3 = value(model[:custo_logistico_n3])
+    end
+    if haskey(model.obj_dict, :custo_fixo_existente_n3)
+        custo_fixo_existente_n3 = value(model[:custo_fixo_existente_n3])
+    end
+    if haskey(model.obj_dict, :custo_times_novos_n3)
+        custo_times_novos_n3 = value(model[:custo_times_novos_n3])
+    end
+    if haskey(model.obj_dict, :custo_variavel_n3)
+        custo_variavel_n3 = value(model[:custo_variavel_n3])
+    end
+    
+    # Custos agregados
+    custo_logistico_total = custo_logistico_n2 + custo_logistico_n3
+    custo_fixo_novo_total = custo_fixo_novos_n1
+    custo_fixo_existente_total = custo_fixo_existente_n2 + custo_fixo_existente_n3
+    custo_times_novos_total = custo_times_novos_n1 + custo_times_novos_n2 + custo_times_novos_n3
+    custo_variavel_total = custo_variavel_n1 + custo_variavel_n2 + custo_variavel_n3
+    
+    # Calcular custo total
+    custo_total = custo_logistico_total + custo_fixo_novo_total + custo_fixo_existente_total + custo_times_novos_total + custo_variavel_total
+    
+    # Adicionar custos por nível
+    push!(results, CostResults("Fixo Novos", "Primário", custo_fixo_novos_n1, 
+                              round(100 * custo_fixo_novos_n1 / custo_total, digits=2),
+                              "Custo de abertura de novas unidades"))
+    
+    push!(results, CostResults("Equipes Novas", "Primário", custo_times_novos_n1,
+                              round(100 * custo_times_novos_n1 / custo_total, digits=2),
+                              "Custo das novas equipes"))
+    
+    push!(results, CostResults("Variável", "Primário", custo_variavel_n1,
+                              round(100 * custo_variavel_n1 / custo_total, digits=2),
+                              "Custo variável por paciente"))
+    
+    # Nível 2 (se existir)
+    if custo_logistico_n2 > 0 || custo_fixo_existente_n2 > 0 || custo_times_novos_n2 > 0 || custo_variavel_n2 > 0
+        push!(results, CostResults("Logístico", "Secundário", custo_logistico_n2,
+                                  round(100 * custo_logistico_n2 / custo_total, digits=2),
+                                  "Custo de transporte nível secundário"))
+        
+        push!(results, CostResults("Fixo Existente", "Secundário", custo_fixo_existente_n2,
+                                  round(100 * custo_fixo_existente_n2 / custo_total, digits=2),
+                                  "Custo fixo das unidades existentes"))
+        
+        push!(results, CostResults("Equipes Novas", "Secundário", custo_times_novos_n2,
+                                  round(100 * custo_times_novos_n2 / custo_total, digits=2),
+                                  "Custo das novas equipes"))
+        
+        push!(results, CostResults("Variável", "Secundário", custo_variavel_n2,
+                                  round(100 * custo_variavel_n2 / custo_total, digits=2),
+                                  "Custo variável por paciente"))
+    end
+    
+    # Nível 3 (se existir)
+    if custo_logistico_n3 > 0 || custo_fixo_existente_n3 > 0 || custo_times_novos_n3 > 0 || custo_variavel_n3 > 0
+        push!(results, CostResults("Logístico", "Terciário", custo_logistico_n3,
+                                  round(100 * custo_logistico_n3 / custo_total, digits=2),
+                                  "Custo de transporte nível terciário"))
+        
+        push!(results, CostResults("Fixo Existente", "Terciário", custo_fixo_existente_n3,
+                                  round(100 * custo_fixo_existente_n3 / custo_total, digits=2),
+                                  "Custo fixo das unidades existentes"))
+        
+        push!(results, CostResults("Equipes Novas", "Terciário", custo_times_novos_n3,
+                                  round(100 * custo_times_novos_n3 / custo_total, digits=2),
+                                  "Custo das novas equipes"))
+        
+        push!(results, CostResults("Variável", "Terciário", custo_variavel_n3,
+                                  round(100 * custo_variavel_n3 / custo_total, digits=2),
+                                  "Custo variável por paciente"))
+    end
+    
+    # Custos agregados
+    push!(results, CostResults("Logístico Total", "Agregado", custo_logistico_total,
+                              round(100 * custo_logistico_total / custo_total, digits=2),
+                              "Custo total de transporte"))
+    
+    push!(results, CostResults("Fixo Novo Total", "Agregado", custo_fixo_novo_total,
+                              round(100 * custo_fixo_novo_total / custo_total, digits=2),
+                              "Custo total de abertura de novas unidades"))
+    
+    push!(results, CostResults("Fixo Existente Total", "Agregado", custo_fixo_existente_total,
+                              round(100 * custo_fixo_existente_total / custo_total, digits=2),
+                              "Custo fixo total das unidades existentes"))
+    
+    push!(results, CostResults("Equipes Novas Total", "Agregado", custo_times_novos_total,
+                              round(100 * custo_times_novos_total / custo_total, digits=2),
+                              "Custo total das novas equipes"))
+    
+    push!(results, CostResults("Variável Total", "Agregado", custo_variavel_total,
+                              round(100 * custo_variavel_total / custo_total, digits=2),
+                              "Custo variável total por paciente"))
+    
+    # Custo total
+    push!(results, CostResults("CUSTO TOTAL", "Total", custo_total, 100.0, "Custo total do sistema"))
+    
+    println("Extraídos resultados para ", length(results), " tipos de custo")
+    return results
+end
+
+"""
+Extrai os resultados da variável fluxo_eq_n1 (eq_n1) e retorna uma lista de TeamFlowResults
+"""
+function extract_team_flow_results(model::Model, indices::ModelIndices, parameters::ModelParameters)::Vector{TeamFlowResults}
+    println("Extraindo resultados do fluxo de equipes...")
+    
+    # Verificar se a variável eq_n1 existe no modelo
+    if !haskey(model.obj_dict, :eq_n1)
+        error("Variável eq_n1 não encontrada no modelo!")
+    end
+    
+    # Extrair valores da variável fluxo_eq_n1 (eq_n1)
+    fluxo_eq_values = value.(model[:eq_n1])
+    
+    results = TeamFlowResults[]
+    
+    # Para cada UBS e equipe
+    for n1 in indices.S_n1
+        for eq in indices.S_equipes_n1
+            # Obter valor da variável de fluxo
+            valor_fluxo = fluxo_eq_values[eq, n1]
+            
+            # Obter quantidade de equipes CNES (capacidade existente)
+            quantidade_cnes = 0.0
+            if n1 <= size(parameters.S_capacidade_CNES_n1, 1) && eq <= size(parameters.S_capacidade_CNES_n1, 2)
+                quantidade_cnes = parameters.S_capacidade_CNES_n1[n1, eq]
+            end
+            
+            # Determinar tipo da UBS
+            tipo_ubs = n1 <= length(indices.S_instalacoes_reais_n1) ? "Real" : "Candidata"
+            
+            # Criar resultado
+            result = TeamFlowResults(
+                n1,                    # ubs
+                quantidade_cnes,       # quantidade_equipes_cnes
+                valor_fluxo,           # valor_variavel_fluxo
+                tipo_ubs               # tipo_ubs
+            )
+            
+            push!(results, result)
+        end
+    end
+    
+    println("Extraídos resultados para ", length(results), " combinações UBS-Equipe")
+    return results
+end
+
+"""
+Gera uma tabela Excel com os resultados do fluxo de equipes
+"""
+function export_team_flow_results_to_excel(team_flow_results::Vector{TeamFlowResults}, 
+                                         filename::String="resultados_fluxo_equipes.xlsx")
+    println("Gerando tabela Excel do fluxo de equipes: ", filename)
+    
+    # Criar DataFrame com os resultados
+    df = DataFrame(
+        "UBS" => [r.ubs for r in team_flow_results],
+        "Quantidade_Equipes_CNES" => [r.quantidade_equipes_cnes for r in team_flow_results],
+        "Valor_Variavel_Fluxo" => [r.valor_variavel_fluxo for r in team_flow_results],
+        "Tipo_UBS" => [r.tipo_ubs for r in team_flow_results]
+    )
+    
+    # Adicionar coluna de total de equipes (CNES + fluxo)
+    df[!, "Total_Equipes"] = df.Quantidade_Equipes_CNES .+ df.Valor_Variavel_Fluxo
+    
+    # Salvar no Excel
+    XLSX.writetable(filename, df)
+    
+    println("Tabela de fluxo de equipes salva com sucesso!")
+    println("Resumo dos resultados:")
+    println("  - Total de combinações UBS-Equipe: ", nrow(df))
+    println("  - UBSs reais: ", count(df.Tipo_UBS .== "Real"))
+    println("  - UBSs candidatas: ", count(df.Tipo_UBS .== "Candidata"))
+    println("  - Total de equipes CNES: ", sum(df.Quantidade_Equipes_CNES))
+    println("  - Total de equipes adicionais (fluxo): ", sum(df.Valor_Variavel_Fluxo))
+    println("  - Total geral de equipes: ", sum(df.Total_Equipes))
+    
+    return df
+end
+
+"""
+Adiciona os resultados do fluxo de equipes a uma aba existente do Excel
+"""
+function add_team_flow_to_excel(team_flow_results::Vector{TeamFlowResults}, 
+                               filename::String)
+    println("Adicionando resultados do fluxo de equipes ao arquivo: ", filename)
+    
+    # Criar DataFrame com os resultados
+    df = DataFrame(
+        "UBS" => [r.ubs for r in team_flow_results],
+        "Quantidade_Equipes_CNES" => [r.quantidade_equipes_cnes for r in team_flow_results],
+        "Valor_Variavel_Fluxo" => [r.valor_variavel_fluxo for r in team_flow_results],
+        "Tipo_UBS" => [r.tipo_ubs for r in team_flow_results]
+    )
+    
+    # Adicionar coluna de total de equipes (CNES + fluxo)
+    df[!, "Total_Equipes"] = df.Quantidade_Equipes_CNES .+ df.Valor_Variavel_Fluxo
+    
+    # Abrir arquivo Excel existente e adicionar nova aba
+    XLSX.openxlsx(filename, mode="rw") do xf
+        # Verificar se a aba já existe
+
+            # Se não existir, criar nova aba
+        sheet = XLSX.addsheet!(xf, "Fluxo_Equipes")
+
+        
+        # Escrever cabeçalhos
+        sheet["A1"] = "UBS"
+        sheet["B1"] = "Quantidade_Equipes_CNES"
+        sheet["C1"] = "Valor_Variavel_Fluxo"
+        sheet["D1"] = "Tipo_UBS"
+        sheet["E1"] = "Total_Equipes"
+        
+        # Escrever dados
+        for (i, row) in enumerate(eachrow(df))
+            sheet["A$(i+1)"] = row.UBS
+            sheet["B$(i+1)"] = row.Quantidade_Equipes_CNES
+            sheet["C$(i+1)"] = row.Valor_Variavel_Fluxo
+            sheet["D$(i+1)"] = row.Tipo_UBS
+            sheet["E$(i+1)"] = row.Total_Equipes
+        end
+    end
+    
+    println("Aba 'Fluxo_Equipes' adicionada com sucesso!")
+    println("Resumo dos resultados:")
+    println("  - Total de combinações UBS-Equipe: ", nrow(df))
+    println("  - UBSs reais: ", count(df.Tipo_UBS .== "Real"))
+    println("  - UBSs candidatas: ", count(df.Tipo_UBS .== "Candidata"))
+    println("  - Total de equipes CNES: ", sum(df.Quantidade_Equipes_CNES))
+    println("  - Total de equipes adicionais (fluxo): ", sum(df.Valor_Variavel_Fluxo))
+    println("  - Total geral de equipes: ", sum(df.Total_Equipes))
+    
+    return df
+end
+
+"""
+Adiciona os resultados dos custos a uma aba existente do Excel
+"""
+function add_cost_results_to_excel(cost_results::Vector{CostResults}, 
+                                 filename::String)
+    println("Adicionando resultados dos custos ao arquivo: ", filename)
+    
+    # Criar DataFrame com os resultados
+    df = DataFrame(
+        "Nivel" => [r.nivel for r in cost_results],
+        "Tipo_Custo" => [r.tipo_custo for r in cost_results],
+        "Valor_R" => [r.valor for r in cost_results],
+        "Percentual" => [r.percentual for r in cost_results],
+        "Descricao" => [r.descricao for r in cost_results]
+    )
+    
+    # Abrir arquivo Excel existente e adicionar nova aba
+    XLSX.openxlsx(filename, mode="rw") do xf
+        # Verificar se a aba já existe
+
+            # Se não existir, criar nova aba
+        sheet = XLSX.addsheet!(xf, "Custos")
+
+        
+        # Escrever cabeçalhos
+        sheet["A1"] = "Nivel"
+        sheet["B1"] = "Tipo_Custo"
+        sheet["C1"] = "Valor_R"
+        sheet["D1"] = "Percentual"
+        sheet["E1"] = "Descricao"
+        
+        # Escrever dados
+        for (i, row) in enumerate(eachrow(df))
+            sheet["A$(i+1)"] = row.Nivel
+            sheet["B$(i+1)"] = row.Tipo_Custo
+            sheet["C$(i+1)"] = row.Valor_R
+            sheet["D$(i+1)"] = row.Percentual
+            sheet["E$(i+1)"] = row.Descricao
+        end
+    end
+    
+    println("Aba 'Custos' adicionada com sucesso!")
+    println("Resumo dos custos:")
+    println("  - Total de tipos de custo: ", nrow(df))
+    #println("  - Custo total: R$ ", round(sum(df.Valor_R), digits=2))
+    
+    # Mostrar os principais custos
+    return df
+end
 
 function print_parcelas_funcao_objetivo(model)
     println("="^60)
@@ -128,12 +616,7 @@ function print_parcelas_funcao_objetivo(model)
     println("-"^40)
     
     # Nível 1 (Primário)
-    println("\nNIVEL PRIMARIO:")
-    println("  • Custo Logistico N1: R\$ " * string(round(value(model[:custo_logistico_n1]), digits=2)))
-    println("  • Custo Fixo Novos N1: R\$ " * string(round(value(model[:custo_fixo_novos_n1]), digits=2)))
-    println("  • Custo Fixo Existente N1: R\$ " * string(round(value(model[:custo_fixo_existente_n1]), digits=2)))
-    println("  • Custo Equipes Novas N1: R\$ " * string(round(value(model[:custo_times_novos_n1]), digits=2)))
-    println("  • Custo Variavel N1: R\$ " * string(round(value(model[:custo_variavel_n1]), digits=2)))
+
     
     # Nível 2 (Secundário)
     println("\nNIVEL SECUNDARIO:")
@@ -498,6 +981,7 @@ function create_optimization_model_maximal_coverage(indices::ModelIndices, param
     S_custo_equipe_n3 = parameters.S_custo_equipe_n3
 
     S_capacidade_CNES_n1 = parameters.S_capacidade_CNES_n1
+    S_capacidade_CNES_n1 = vcat(S_capacidade_CNES_n1, [0.0,0.0])
     S_capacidade_CNES_n2 = parameters.S_capacidade_CNES_n2
     S_capacidade_CNES_n3 = parameters.S_capacidade_CNES_n3
 
@@ -519,8 +1003,11 @@ function create_optimization_model_maximal_coverage(indices::ModelIndices, param
     S_custo_fixo_n3 = mun_data.constantes.S_custo_fixo_n3
 
     S_quantidade_total_real_equipes = Vector{Int64}([sum(S_capacidade_CNES_n1[:,eq]) for eq in S_equipes])
-    vls_eq = [100, 200, 300, 100, 20, 40, 50, 70, 90, 30, 11]
-    Orcamento_Maximo = 200000000
+    Orcamento_Maximo = parameters.orcamento_maximo
+    ponderador_Vulnerabilidade = parameters.ponderador_Vulnerabilidade
+    S_IVS = ponderador_Vulnerabilidade .* parameters.IVS
+
+    cap_equipes_n1 = 3000
 
     model = Model(HiGHS.Optimizer)
     set_optimizer_attribute(model, "time_limit", 300.0)
@@ -533,6 +1020,7 @@ function create_optimization_model_maximal_coverage(indices::ModelIndices, param
     var_abr_n1 = @variable(model, Abr_n1[n1 in S_n1], Bin) #Abertura unidades primárias
     fluxo_eq_n1 = @variable(model, eq_n1[eq in S_equipes, n1 in S_n1])
     var_pop_atendida = @variable(model, pop_atendida[d in S_Pontos_Demanda, eq in S_equipes, n1 in dominio_atr_n1[d]] >= 0) #Inserir aqui as demografias das populacoes!
+    
     #inicialmente vou somente encaminhar demanda para niveis superiore
     #Fluxo n2
     fluxo_n2 = @variable(model, X_n2[n1 in S_n1, n2 in dominio_atr_n2[n1]] >= 0)
@@ -541,26 +1029,31 @@ function create_optimization_model_maximal_coverage(indices::ModelIndices, param
     fluxo_n3 = @variable(model, X_n3[n2 in S_n2, n3 in dominio_atr_n3[n2]] >= 0)
     var_abr_n3 = @variable(model, Abr_n3[n3 in S_n3] == 1, Bin)
 
-
-
-
     #Todas as unidades devem ser alocadas numa UBS de referencia
     @constraint(model, [d in S_Pontos_Demanda], sum(Aloc_[d, n1] for n1 in dominio_atr_n1[d]) == 1)
     @constraint(model, [d in S_Pontos_Demanda, eq in S_equipes, n1 in dominio_atr_n1[d]], var_pop_atendida[d, eq, n1] <= aloc_n1[d, n1] * maximum(S_Valor_Demanda))
-    @constraint(model, [d in S_Pontos_Demanda, eq in S_equipes], sum(var_pop_atendida[d, eq, n1] for n1 in dominio_atr_n1[d]) <= S_Valor_Demanda[d]) #Sei que esta redundante, mas é um teste para nao ter GAP infinito no solver.
-    @constraint(model, [n1 in S_n1, eq in S_equipes], sum(var_pop_atendida[d, eq, n1] for d in S_Pontos_Demanda if n1 in dominio_atr_n1[d]) <= Cap_n1 * 10)
+    @constraint(model, [d in S_Pontos_Demanda, eq in S_equipes], sum(var_pop_atendida[d, eq, n1] for n1 in dominio_atr_n1[d]) <= S_Valor_Demanda[d])
+    
+
+
+    #Capacidades das UBS de acordo com a quantidade de equipes alocadas
+    @constraint(model, [n1 in S_instalacoes_reais_n1, eq in S_equipes], 
+    sum(var_pop_atendida[d, eq, n1] for d in S_Pontos_Demanda if n1 in dominio_atr_n1[d]) <= (S_capacidade_CNES_n1[n1, eq] + fluxo_eq_n1[eq,n1]) * cap_equipes_n1)
+
+    @constraint(model, [n1 in S_locais_candidatos_n1, eq in S_equipes], 
+    sum(var_pop_atendida[d, eq, n1] for d in S_Pontos_Demanda if n1 in dominio_atr_n1[d]) <=  fluxo_eq_n1[eq,n1] * cap_equipes_n1)
 
     #Abertura de unidades novas:
     @constraint(model, [d in S_Pontos_Demanda, s in dominio_candidatos_n1[d]], 
                          Aloc_[d, s] <= var_abr_n1[s] )
 
     #Restricao do fluxo de equipes:
-    @constraint(model, [eq in S_equipes, un in S_instalacoes_reais_n1], 
-    S_capacidade_CNES_n1[un, eq] + fluxo_eq_n1[eq,un] == sum(pop_atendida[d, eq, un] for d in S_Pontos_Demanda if un in dominio_atr_n1[d]) * capacidade_maxima_por_equipe_n1[eq])
+    #@constraint(model, [eq in S_equipes, un in S_instalacoes_reais_n1], 
+    #S_capacidade_CNES_n1[un, eq] + fluxo_eq_n1[eq,un] == sum(pop_atendida[d, eq, un] for d in S_Pontos_Demanda if un in dominio_atr_n1[d]) * capacidade_maxima_por_equipe_n1[eq])
 
 
-    @constraint(model, [eq in S_equipes, un in S_locais_candidatos_n1], 
-        fluxo_eq_n1[eq,un] == sum(pop_atendida[d, eq, un] for d in S_Pontos_Demanda if un in dominio_atr_n1[d]) * capacidade_maxima_por_equipe_n1[eq])
+    #@constraint(model, [eq in S_equipes, un in S_locais_candidatos_n1], 
+        #fluxo_eq_n1[eq,un] == sum(pop_atendida[d, eq, un] for d in S_Pontos_Demanda if un in dominio_atr_n1[d]) * capacidade_maxima_por_equipe_n1[eq])
 
     
     #Restricao de balanco de massa de capacidade
@@ -575,10 +1068,13 @@ function create_optimization_model_maximal_coverage(indices::ModelIndices, param
     #@expression(model, custo_logistico_n1,  sum(X_n1[d, un, p] * Matriz_Dist_n1[d, un] * custo_deslocamento for d in S_Pontos_Demanda, un in S_n1, p in S_pacientes if un in dominio_atr_n1[d]))
 
     @expression(model, custo_fixo_novos_n1, sum(Abr_n1[un] * S_custo_fixo_n1 for un in S_locais_candidatos_n1))
-    @expression(model, custo_fixo_existente_n1, sum(S_custo_fixo_n1 for un1 in S_instalacoes_reais_n1))
+    #@expression(model, custo_fixo_existente_n1, sum(S_custo_fixo_n1 for un1 in S_instalacoes_reais_n1))
     @expression(model, custo_times_novos_n1, sum(fluxo_eq_n1[eq, un] * S_custo_equipe_n1[eq] for eq in S_equipes, un in S_n1))
     @expression(model, custo_variavel_n1, sum(pop_atendida[d, eq,  un] * S_custo_variavel_n1[1] for d in S_Pontos_Demanda, eq in S_equipes, un in S_n1 if un in dominio_atr_n1[d]))
-    @expression(model, custo_total_n1, custo_fixo_novos_n1 +  custo_fixo_existente_n1 + custo_times_novos_n1 + custo_variavel_n1)
+    @expression(model, custo_total_n1, custo_fixo_novos_n1 
+   # + custo_fixo_existente_n1 
+    + custo_times_novos_n1 
+    + custo_variavel_n1)
 
 
     @constraint(model, custo_total_n1 <= Orcamento_Maximo)
@@ -601,56 +1097,11 @@ function create_optimization_model_maximal_coverage(indices::ModelIndices, param
     #+ sum(var_equidade[eq] * vls_eq[eq] for eq in S_equipes)
     )
 
-
-
-    optimize!(model)
-    obj = objective_value(model)
-    println(obj)
-    println(value(custo_total_n1))
-
-    #Populacao atendida por equipes - Populacao atual
-    # Criar um dicionário para armazenar as listas de resultados por equipe
-    resultados_por_equipe = Dict{Int, Vector{Tuple{Int, Int, Float64}}}()
-    diferencas_por_equipe = Dict{Int, Vector{Tuple{Int, Int, Float64}}}()
-
-    for eq in S_equipes
-        resultados_por_equipe[eq] = Vector{Tuple{Int, Int, Float64}}()
-        diferencas_por_equipe[eq] = Vector{Tuple{Int, Int, Float64}}()
-    end
-
-    for eq in S_equipes, i in indices.S_Pontos_Demanda, j in dominio_atr_n1[i]
-        if value(Aloc_[i,j]) == 1
-            valor_pop = value(pop_atendida[i, eq, j])
-            diferenca = S_Valor_Demanda[i] - valor_pop
-            # Salva (i, j, valor_pop) para cada equipe
-            push!(resultados_por_equipe[eq], (i, j, valor_pop))
-            # Salva (i, j, diferenca) para cada equipe
-            push!(diferencas_por_equipe[eq], (i, j, diferenca))
-        end
-    end
-
-    for eq in S_equipes
-        # Soma das diferenças para a equipe
-        soma_diferencas = sum(x[3] for x in diferencas_por_equipe[eq])
-        # Soma da população atendida para a equipe
-        soma_atendida = sum(x[3] for x in resultados_por_equipe[eq])
-        # Soma da demanda total para a equipe
-        soma_demanda = soma_atendida + soma_diferencas
-        # Calcular a porcentagem da população atendida
-        porcentagem_atendida = soma_demanda > 0 ? (soma_atendida / soma_demanda) * 100 : 0.0
-        println("Equipe: ", eq)
-        println("População atendida: ", soma_atendida)
-        println("Demanda total: ", soma_demanda)
-        println("Porcentagem da população atendida: ", round(porcentagem_atendida, digits=2), "%")
-    end
-
-    
-    # Exemplo de como acessar os resultados:
-    # for eq in S_equipes
-    #     println("Equipe: ", eq)
-    #     println("População atendida (i, j, valor): ", resultados_por_equipe[eq])
-    #     println("Diferença demanda - atendida (i, j, valor): ", diferencas_por_equipe[eq])
-    # end
+    #optimize!(model)
+    #obj = objective_value(model)
+    #println(obj)
+    #println(value(custo_total_n1))
+    return model
 
 end
 

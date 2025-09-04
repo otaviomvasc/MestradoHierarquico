@@ -71,6 +71,7 @@ mutable struct ModelConstants
 end
 
 mutable struct MunicipalityData
+    Setor_Censitario::Vector{String}
     nome::String # CD_SETOR => demanda
     S_Valor_Demanda::Vector{Int}
     coordenadas::Vector{Tuple{Float64, Float64}}
@@ -117,6 +118,8 @@ mutable struct ModelParameters
     S_Matriz_Dist::Matriz_Dist
     S_domains::Domains
     IVS::Vector{Float64}
+    orcamento_maximo::Float64
+    ponderador_Vulnerabilidade::Float64
 end
 
 # Funções de leitura de dados
@@ -143,6 +146,7 @@ function filter_municipality_data(data::HealthcareData, municipio::String)::Muni
     # Filtrar dados do município
     df_m = data.df_demanda[data.df_demanda.NM_MUN .== municipio, :]
     # Criar dicionários usando eachrow
+    S_Setor = [row["CD_SETOR"] for row in eachrow(df_m)]
     S_Valor_Demanda = [row["Total de pessoas"] for row in eachrow(df_m)]
     c_coords = [(row.Latitude, row.Longitude) for row in eachrow(df_m)]
     S_cnes_primario_referencia_real = [row["UBS_ref"] for row in eachrow(df_m)]
@@ -188,6 +192,7 @@ function filter_municipality_data(data::HealthcareData, municipio::String)::Muni
                     
 
     return MunicipalityData(
+        S_Setor,
         municipio,
         S_Valor_Demanda,
         c_coords,
