@@ -209,13 +209,6 @@ path_ponderado_sem_indicadores_saude = r"C:\Users\marce\OneDrive\Área de Trabal
 path_dados_totais_pop = r"C:\Users\marce\OneDrive\Área de Trabalho\MestradoHierarquico\Dados_rakiados-TOP_SYS_COMPLETO-DADOS-TOTAL-POP.xlsx"
 
 # %%
-mapa_ponderado = plota_mapa_vulnerabilidade(path_ponderado)
-# %%
-mapa_ponderado_sem_indicadores_saude = plota_mapa_vulnerabilidade(
-    path_ponderado_sem_indicadores_saude
-)
-mapa_ponderado_sem_indicadores_saude
-# %%
 mapa_path_dados_totais_pop = plota_mapa_vulnerabilidade(path_dados_totais_pop, 100)
 mapa_path_dados_totais_pop
 # %%

@@ -15,13 +15,16 @@ struct PopulationResults
     setor::String
     ponto_demanda::Int
     populacao_total::Int
-    populacao_atendida::Float64
+    populacao_atendida_total_eq_1::Float64
+    populacao_atendida_total_eq_2::Float64
     ubs_alocada::Int
     coord_demanda_lat::Float64
     coord_demanda_lon::Float64
     coord_ubs_lat::Float64
     coord_ubs_lon::Float64
     ivs::Float64
+    cnes::Int
+    nome_fantasia::String
 end
 
 # Estrutura para armazenar resultados do fluxo de equipes
@@ -190,12 +193,18 @@ function extract_population_results(model::Model, indices::ModelIndices, mun_dat
             end
         end
         
-        # Calcular população total atendida (soma de todas as equipes)
-        populacao_atendida_total = 0.0
+        # Calcular população total atendida (preciso saber por tipo de equipes!)
+        populacao_atendida_total_eq_1 = 0.0
+        populacao_atendida_total_eq_2 = 0.0
         for eq in indices.S_equipes_n1
             for n1 in indices.S_n1
                 if haskey(pop_atendida_values, (d, eq, n1)) && pop_atendida_values[d, eq, n1] > 0
-                    populacao_atendida_total += pop_atendida_values[d, eq, n1]
+                    if eq == 1
+                        populacao_atendida_total_eq_1 += pop_atendida_values[d, eq, n1]
+                    end
+                    if eq == 2
+                        populacao_atendida_total_eq_2 += pop_atendida_values[d, eq, n1]
+                    end
                 end
             end
         end
@@ -210,12 +219,16 @@ function extract_population_results(model::Model, indices::ModelIndices, mun_dat
                 ubs_row = mun_data.unidades_n1[ubs_alocada, :]
                 coord_ubs_lat = ubs_row.latitude
                 coord_ubs_lon = ubs_row.longitude
+                cnes = ubs_row.cnes
+                nome_fantasia = ubs_row.nome_fantasia
             else
                 # É uma UBS candidata (localizada no ponto de demanda)
                 candidata_idx = ubs_alocada - length(mun_data.unidades_n1.cnes)
                 if candidata_idx <= length(mun_data.coordenadas)
                     coord_ubs_lat = mun_data.coordenadas[candidata_idx][1]
                     coord_ubs_lon = mun_data.coordenadas[candidata_idx][2]
+                    cnes = 000000
+                    nome_fantasia = "Unidade_Candidata_Aberta"
                 end
             end
         end
@@ -225,13 +238,16 @@ function extract_population_results(model::Model, indices::ModelIndices, mun_dat
             setor,
             d,                          # ponto_demanda
             populacao_total,            # populacao_total
-            populacao_atendida_total,   # populacao_atendida
+            populacao_atendida_total_eq_1,
+            populacao_atendida_total_eq_2,   # populacao_atendida
             ubs_alocada,                # ubs_alocada
             coord_demanda_lat,          # coord_demanda_lat
             coord_demanda_lon,          # coord_demanda_lon
             coord_ubs_lat,              # coord_ubs_lat
             coord_ubs_lon,
-            ivs               # coord_ubs_lon
+            ivs,
+            cnes,
+            nome_fantasia               # coord_ubs_lon
         )
         
         push!(results, result)
@@ -253,7 +269,8 @@ function export_population_results_to_excel(population_results::Vector{Populatio
         "Setor" => [r.setor for r in population_results], 
         "Ponto_Demanda" => [r.ponto_demanda for r in population_results],
         "Populacao_Total" => [r.populacao_total for r in population_results],
-        "Populacao_Atendida" => [r.populacao_atendida for r in population_results],
+        "Populacao_Atendida_ESF" => [r.populacao_atendida_total_eq_1 for r in population_results],
+        "Populacao_Atendida_ESB" => [r.populacao_atendida_total_eq_2 for r in population_results],
         "UBS_Alocada" => [r.ubs_alocada for r in population_results],
         "Lat_Demanda" => [r.coord_demanda_lat for r in population_results],
         "Lon_Demanda" => [r.coord_demanda_lon for r in population_results],
@@ -272,7 +289,7 @@ function export_population_results_to_excel(population_results::Vector{Populatio
     println("Resumo dos resultados:")
     println("  - Total de pontos de demanda: ", nrow(df))
     println("  - População total: ", sum(df.Populacao_Total))
-    println("  - População atendida: ", round(sum(df.Populacao_Atendida), digits=0))
+    #println("  - População atendida: ", round(sum(df.Populacao_Atendida), digits=0))
     #println("  - Percentual médio de atendimento: ", round(mean(df.Percentual_Atendimento), digits=2), "%")
     
     return df
@@ -290,9 +307,42 @@ function extract_cost_results(model::Model)::Vector{CostResults}
     custo_total = 0.0
     
     # Custos do nível 1 (Primário)
-    custo_fixo_novos_n1 = value(model[:custo_fixo_novos_n1])
-    custo_times_novos_n1 = value(model[:custo_times_novos_n1])
+    custo_contratacao_equipes_esf = value(model[:custo_contratacao_equipes_esf])
+    custo_realocaca_equipes_esf = value(model[:custo_realocaca_equipes_esf])
+    custo_mensal_equipes_esf = value(model[:custo_mensal_equipes_esf])
+    custo_contratacao_equipes_esb = value(model[:custo_contratacao_equipes_esb])
+    custo_realocaca_equipes_esb = value(model[:custo_realocaca_equipes_esb])
+    custo_mensal_equipes_esb = value(model[:custo_mensal_equipes_esb])
+    custo_fixo_novos_n1 = 0.0
+    custo_fixo_existente_n1 = 0.0
+    if haskey(model.obj_dict, :custo_fixo)
+        # Separa o custo fixo em novos e existentes, se possível
+        # Supondo que S_instalacoes_reais_n1 e S_locais_candidatos_n1 estejam disponíveis no escopo
+        # e que S_custo_fixo_n1 é o valor unitário do custo fixo
+        try
+            custo_fixo_novos_n1 = sum(value(model[:Abr_n1][un]) * S_custo_fixo_n1 for un in S_locais_candidatos_n1)
+        catch
+            custo_fixo_novos_n1 = 0.0
+        end
+        try
+            custo_fixo_existente_n1 = length(S_instalacoes_reais_n1) * S_custo_fixo_n1
+        catch
+            custo_fixo_existente_n1 = 0.0
+        end
+    end
     custo_variavel_n1 = value(model[:custo_variavel_n1])
+    custo_times_novos_n1 = 0.0
+    if haskey(model.obj_dict, :eq_ESF_criadas) && haskey(model.obj_dict, :eq_ESB_criadas)
+        try
+            custo_times_novos_n1 = sum(value(model[:eq_ESF_criadas][n1]) for n1 in S_n1) * 25000 +
+                                   sum(value(model[:eq_ESB_criadas][n1]) for n1 in S_n1) * 25000
+        catch
+            custo_times_novos_n1 = 0.0
+        end
+    else
+        # fallback para os custos já extraídos
+        custo_times_novos_n1 = custo_contratacao_equipes_esf + custo_contratacao_equipes_esb
+    end
     
     # Custos do nível 2 (Secundário) - se existirem
     custo_logistico_n2 = 0.0
@@ -422,138 +472,270 @@ function extract_cost_results(model::Model)::Vector{CostResults}
 end
 
 """
-Extrai os resultados da variável fluxo_eq_n1 (eq_n1) e retorna uma lista de TeamFlowResults
+Extrai os resultados das variáveis eq_ESF_n1 e eq_ESB_n1 e retorna um DataFrame unificado com as colunas:
+- tipo_equipe: 1 para ESF, 2 para ESB
+- Indice_UBS: índice da UBS de destino (n1)
+- Valor_Variavel: valor da variável (alocação da equipe na UBS)
+- Origem_Equipe: índice da UBS de origem da equipe (posição no vetor de origem)
 """
-function extract_team_flow_results(model::Model, indices::ModelIndices, parameters::ModelParameters)::Vector{TeamFlowResults}
-    println("Extraindo resultados do fluxo de equipes...")
-    
-    # Verificar se a variável eq_n1 existe no modelo
-    if !haskey(model.obj_dict, :eq_n1)
-        error("Variável eq_n1 não encontrada no modelo!")
+function extract_team_flow_results(model::Model, indices::ModelIndices, parameters::ModelParameters, mun_data::MunicipalityData)::DataFrame
+    println("Extraindo resultados do fluxo de equipes (ESF e ESB)...")
+
+    # Verificações de existência das variáveis no modelo
+    has_esf = haskey(model.obj_dict, :eq_ESF_n1)
+    has_esb = haskey(model.obj_dict, :eq_ESB_n1)
+    if !has_esf && !has_esb
+        error("Variáveis eq_ESF_n1 e eq_ESB_n1 não encontradas no modelo!")
     end
-    
-    # Extrair valores da variável fluxo_eq_n1 (eq_n1)
-    fluxo_eq_values = value.(model[:eq_n1])
-    
-    results = TeamFlowResults[]
-    
-    # Para cada UBS e equipe
-    for n1 in indices.S_n1
-        for eq in indices.S_equipes_n1
-            # Obter valor da variável de fluxo
-            valor_fluxo = fluxo_eq_values[eq, n1]
-            
-            # Obter quantidade de equipes CNES (capacidade existente)
-            quantidade_cnes = 0.0
-            if n1 <= size(parameters.S_capacidade_CNES_n1, 1) && eq <= size(parameters.S_capacidade_CNES_n1, 2)
-                quantidade_cnes = parameters.S_capacidade_CNES_n1[n1, eq]
+
+    # Extrair valores das variáveis (se existirem)
+    esf_vals = has_esf ? value.(model[:eq_ESF_n1]) : Dict{Tuple{Int,Int},Float64}()
+    esb_vals = has_esb ? value.(model[:eq_ESB_n1]) : Dict{Tuple{Int,Int},Float64}()
+
+    # Vetores para construção do DataFrame
+    tipos = Int[]
+    ubs_indices = Int[]
+    cnes_ubs_origem = Int[]
+    valores = Float64[]
+    origens = Int[]
+    indice_eq = Int[]
+    cnes_equipe = Int[]
+    lat_und_origem = Float64[]
+    long_und_origem = Float64[] 
+    lat_destindo = Float64[]
+    long_destino = Float64[]
+    #mun_data.equipes_ESB_primario_v2.CO_EQUIPE[eq]
+    cnes_UBS_destino = Int[]
+
+    # ESF (tipo_equipe = 1)
+
+    if has_esf
+        for eq in indices.S_Equipes_ESF
+            origem_eq = (eq <= length(indices.S_origem_equipes_ESF)) ? indices.S_origem_equipes_ESF[eq] : -1
+            for n1 in indices.S_n1
+                if esf_vals[eq, n1] !== nothing
+                    v = esf_vals[eq, n1]
+                    if v > 0
+                    # Exportar todos os registros existentes (incluindo zeros) para transparência
+                        push!(indice_eq, eq)
+                        push!(cnes_equipe, mun_data.equipes_ESF_primario_v2.CO_EQUIPE[eq])
+                        push!(tipos, 1)
+                        push!(ubs_indices, n1) #destino!
+                        push!(valores, v)
+                        push!(origens, origem_eq)
+                        push!(lat_und_origem, mun_data.unidades_n1.latitude[origem_eq])
+                        push!(long_und_origem, mun_data.unidades_n1.longitude[origem_eq] )
+                        push!(cnes_ubs_origem, mun_data.unidades_n1.cnes[origem_eq])
+                        if n1 > length(mun_data.unidades_n1.cnes)
+                            new_n1 = n1 - length(mun_data.unidades_n1.cnes)
+                            push!(cnes_UBS_destino, 0) #Equipe é candidata!
+                            push!(lat_destindo, mun_data.coordenadas[new_n1][1])
+                            push!(long_destino, mun_data.coordenadas[new_n1][2] )
+                        else
+                            push!(cnes_UBS_destino, mun_data.unidades_n1.cnes[n1])
+                            push!(lat_destindo, mun_data.unidades_n1.latitude[n1] )
+                            push!(long_destino, mun_data.unidades_n1.longitude[n1] )
+                        
+                            #localizacao da origem!
+                        end    # Se nenhuma equipe tiver valor v > 0, salve as mesmas informações sem as informações da UBS de destino
+
+                        
+                    end
+                end
             end
-            
-            # Determinar tipo da UBS
-            tipo_ubs = n1 <= length(indices.S_instalacoes_reais_n1) ? "Real" : "Candidata"
-            
-            # Criar resultado
-            result = TeamFlowResults(
-                n1,                    # ubs
-                quantidade_cnes,       # quantidade_equipes_cnes
-                valor_fluxo,           # valor_variavel_fluxo
-                tipo_ubs               # tipo_ubs
-            )
-            
-            push!(results, result)
+
+        if isempty(valores)
+                push!(indice_eq, eq)
+                push!(cnes_equipe, mun_data.equipes_ESF_primario_v2.CO_EQUIPE[eq])
+                push!(tipos, 1)
+                push!(ubs_indices, 0)
+                push!(valores, 0.0)
+                push!(origens, origem_eq)
+                push!(cnes_ubs_origem, mun_data.unidades_n1.cnes[origem_eq])
+                push!(lat_und_origem, mun_data.unidades_n1.latitude[origem_eq])
+                push!(long_und_origem, mun_data.unidades_n1.longitude[origem_eq])
+                push!(cnes_UBS_destino, 0)
+                push!(lat_destindo, 0)
+                push!(long_destino, 0)
+        end
         end
     end
-    
-    println("Extraídos resultados para ", length(results), " combinações UBS-Equipe")
-    return results
+
+    # ESB (tipo_equipe = 2)
+    if has_esb
+        for eq in indices.S_Equipes_ESB
+            origem_eq = (eq <= length(indices.S_origem_equipes_ESB)) ? indices.S_origem_equipes_ESB[eq] : -1
+            for n1 in indices.S_n1
+                if esb_vals[eq, n1] !== nothing
+                    v = esb_vals[eq, n1]
+                    if v > 0
+                        push!(indice_eq, eq)
+                        push!(cnes_equipe, mun_data.equipes_ESB_primario_v2.CO_EQUIPE[eq])
+                        push!(tipos, 2)
+                        push!(ubs_indices, n1)
+                        push!(valores, v)
+                        push!(origens, origem_eq)
+                        push!(lat_und_origem, mun_data.unidades_n1.latitude[origem_eq])
+                        push!(long_und_origem, mun_data.unidades_n1.longitude[origem_eq] )
+                        push!(cnes_ubs_origem, mun_data.unidades_n1.cnes[origem_eq])
+                        if n1 > length(mun_data.unidades_n1.cnes)
+                            new_n1 = n1 - length(mun_data.unidades_n1.cnes)
+                            push!(cnes_UBS_destino, 0) #Equipe é candidata!
+                            push!(lat_destindo, mun_data.coordenadas[new_n1][1])
+                            push!(long_destino, mun_data.coordenadas[new_n1][2] )
+                        else
+                            push!(cnes_UBS_destino, mun_data.unidades_n1.cnes[n1])
+                            push!(lat_destindo, mun_data.unidades_n1.latitude[n1] )
+                            push!(long_destino, mun_data.unidades_n1.longitude[n1] )
+                        end
+                    end
+                end
+            end
+        if isempty(valores)
+            push!(indice_eq, eq)
+            push!(cnes_equipe, mun_data.equipes_ESF_primario_v2.CO_EQUIPE[eq])
+            push!(tipos, 1)
+            push!(ubs_indices, 0)
+            push!(valores, 0.0)
+            push!(origens, origem_eq)
+            push!(cnes_ubs_origem, mun_data.unidades_n1.cnes[origem_eq])
+            push!(lat_und_origem, mun_data.unidades_n1.latitude[origem_eq])
+            push!(long_und_origem, mun_data.unidades_n1.longitude[origem_eq])
+            push!(cnes_UBS_destino, 0)
+            push!(lat_destindo, 0)
+            push!(long_destino, 0)
+        end
+        end
+    end
+
+    df = DataFrame(
+        "tipo_equipe" => tipos,
+        "Indice_UBS" => ubs_indices,
+        "Valor_Variavel" => valores,
+        "Origem_Equipe" => origens,
+        "Indice_equipe" => indice_eq,
+        "cnes_eq" => cnes_equipe,
+        "cnes_ubs_origem" => cnes_ubs_origem, 
+        "cnes_UBS_destino" => cnes_UBS_destino, 
+        "lat_origem" => lat_und_origem,
+        "long_origem" => long_und_origem,
+        "lat_destino" => lat_destindo,
+        "long_destino" => long_destino
+    )
+
+    println("Linhas exportadas (fluxo de equipes): ", nrow(df))
+    return df
 end
 
 """
-Gera uma tabela Excel com os resultados do fluxo de equipes
+Extrai os resultados das variáveis eq_ESF_criadas e eq_ESB_criadas e retorna um DataFrame com as colunas:
+- Unidade_UBS
+- eq_ESB_criadas
+- eq_ESF_criadas
 """
-function export_team_flow_results_to_excel(team_flow_results::Vector{TeamFlowResults}, 
+function extract_created_teams_df(model::Model, indices::ModelIndices, parameters::ModelParameters, mun_data::MunicipalityData)::DataFrame
+    println("Extraindo resultados de equipes criadas (ESF e ESB)...")
+
+    has_esf_criadas = haskey(model.obj_dict, :eq_ESF_criadas)
+    has_esb_criadas = haskey(model.obj_dict, :eq_ESB_criadas)
+    if !has_esf_criadas && !has_esb_criadas
+        error("Variáveis eq_ESF_criadas e eq_ESB_criadas não encontradas no modelo!")
+    end
+
+    esf_criadas = has_esf_criadas ? value.(model[:eq_ESF_criadas]) : Dict{Int,Float64}()
+    esb_criadas = has_esb_criadas ? value.(model[:eq_ESB_criadas]) : Dict{Int,Float64}()
+
+    ubs = Int[]
+    v_esb = Float64[]
+    v_esf = Float64[]
+
+    for n1 in indices.S_n1
+        push!(ubs, n1)
+        push!(v_esb, value.(model[:eq_ESB_criadas])[n1])
+        push!(v_esf, value.(model[:eq_ESF_criadas])[n1])
+    end
+
+    df = DataFrame(
+        "Unidade_UBS" => ubs,
+        "eq_ESB_criadas" => v_esb,
+        "eq_ESF_criadas" => v_esf,
+    )
+
+    println("Linhas exportadas (equipes criadas): ", nrow(df))
+    return df
+end
+
+"""
+Gera uma planilha Excel com o DataFrame do fluxo de equipes (ESF e ESB) já no novo formato
+"""
+function export_team_flow_results_to_excel(df_team_flow::DataFrame, 
                                          filename::String="resultados_fluxo_equipes.xlsx")
     println("Gerando tabela Excel do fluxo de equipes: ", filename)
-    
-    # Criar DataFrame com os resultados
-    df = DataFrame(
-        "UBS" => [r.ubs for r in team_flow_results],
-        "Quantidade_Equipes_CNES" => [r.quantidade_equipes_cnes for r in team_flow_results],
-        "Valor_Variavel_Fluxo" => [r.valor_variavel_fluxo for r in team_flow_results],
-        "Tipo_UBS" => [r.tipo_ubs for r in team_flow_results]
-    )
-    
-    # Adicionar coluna de total de equipes (CNES + fluxo)
-    df[!, "Total_Equipes"] = df.Quantidade_Equipes_CNES .+ df.Valor_Variavel_Fluxo
-    
-    # Salvar no Excel
-    XLSX.writetable(filename, df)
-    
+
+    # Salvar no Excel diretamente a partir do DataFrame fornecido
+    XLSX.writetable(filename, df_team_flow)
+
     println("Tabela de fluxo de equipes salva com sucesso!")
-    println("Resumo dos resultados:")
-    println("  - Total de combinações UBS-Equipe: ", nrow(df))
-    println("  - UBSs reais: ", count(df.Tipo_UBS .== "Real"))
-    println("  - UBSs candidatas: ", count(df.Tipo_UBS .== "Candidata"))
-    println("  - Total de equipes CNES: ", sum(df.Quantidade_Equipes_CNES))
-    println("  - Total de equipes adicionais (fluxo): ", sum(df.Valor_Variavel_Fluxo))
-    println("  - Total geral de equipes: ", sum(df.Total_Equipes))
-    
+    println("Linhas: ", nrow(df_team_flow), " | Colunas: ", ncol(df_team_flow))
+    return df_team_flow
+end
+
+"""
+Adiciona o DataFrame do fluxo de equipes (novo formato) a uma aba existente do Excel
+"""
+function add_team_flow_to_excel(df::DataFrame, filename::String)
+    println("Adicionando resultados do fluxo de equipes ao arquivo: ", filename)
+
+    # Abrir arquivo Excel existente e adicionar nova aba
+    XLSX.openxlsx(filename, mode="rw") do xf
+        sheet = XLSX.addsheet!(xf, "Fluxo_Equipes")
+
+        # Cabeçalhos conforme DataFrame
+        headers = names(df)
+        for (j, h) in enumerate(headers)
+            col = Char('A' + j - 1)
+            sheet["$(col)1"] = String(h)
+        end
+
+        # Escrever dados
+        for (i, row) in enumerate(eachrow(df))
+            for (j, h) in enumerate(headers)
+                col = Char('A' + j - 1)
+                sheet["$(col)$(i+1)"] = row[h]
+            end
+        end
+    end
+
+    println("Aba 'Fluxo_Equipes' adicionada com sucesso!")
+    println("Linhas: ", nrow(df), " | Colunas: ", ncol(df))
     return df
 end
 
 """
-Adiciona os resultados do fluxo de equipes a uma aba existente do Excel
+Adiciona o DataFrame de equipes criadas (ESF/ESB) a uma aba existente do Excel
 """
-function add_team_flow_to_excel(team_flow_results::Vector{TeamFlowResults}, 
-                               filename::String)
-    println("Adicionando resultados do fluxo de equipes ao arquivo: ", filename)
-    
-    # Criar DataFrame com os resultados
-    df = DataFrame(
-        "UBS" => [r.ubs for r in team_flow_results],
-        "Quantidade_Equipes_CNES" => [r.quantidade_equipes_cnes for r in team_flow_results],
-        "Valor_Variavel_Fluxo" => [r.valor_variavel_fluxo for r in team_flow_results],
-        "Tipo_UBS" => [r.tipo_ubs for r in team_flow_results]
-    )
-    
-    # Adicionar coluna de total de equipes (CNES + fluxo)
-    df[!, "Total_Equipes"] = df.Quantidade_Equipes_CNES .+ df.Valor_Variavel_Fluxo
-    
-    # Abrir arquivo Excel existente e adicionar nova aba
+function add_created_teams_to_excel(df_created::DataFrame, filename::String)
+    println("Adicionando resultados de equipes criadas ao arquivo: ", filename)
+
     XLSX.openxlsx(filename, mode="rw") do xf
-        # Verificar se a aba já existe
+        sheet = XLSX.addsheet!(xf, "Equipes_Criadas")
 
-            # Se não existir, criar nova aba
-        sheet = XLSX.addsheet!(xf, "Fluxo_Equipes")
+        headers = names(df_created)
+        for (j, h) in enumerate(headers)
+            col = Char('A' + j - 1)
+            sheet["$(col)1"] = String(h)
+        end
 
-        
-        # Escrever cabeçalhos
-        sheet["A1"] = "UBS"
-        sheet["B1"] = "Quantidade_Equipes_CNES"
-        sheet["C1"] = "Valor_Variavel_Fluxo"
-        sheet["D1"] = "Tipo_UBS"
-        sheet["E1"] = "Total_Equipes"
-        
-        # Escrever dados
-        for (i, row) in enumerate(eachrow(df))
-            sheet["A$(i+1)"] = row.UBS
-            sheet["B$(i+1)"] = row.Quantidade_Equipes_CNES
-            sheet["C$(i+1)"] = row.Valor_Variavel_Fluxo
-            sheet["D$(i+1)"] = row.Tipo_UBS
-            sheet["E$(i+1)"] = row.Total_Equipes
+        for (i, row) in enumerate(eachrow(df_created))
+            for (j, h) in enumerate(headers)
+                col = Char('A' + j - 1)
+                sheet["$(col)$(i+1)"] = row[h]
+            end
         end
     end
-    
-    println("Aba 'Fluxo_Equipes' adicionada com sucesso!")
-    println("Resumo dos resultados:")
-    println("  - Total de combinações UBS-Equipe: ", nrow(df))
-    println("  - UBSs reais: ", count(df.Tipo_UBS .== "Real"))
-    println("  - UBSs candidatas: ", count(df.Tipo_UBS .== "Candidata"))
-    println("  - Total de equipes CNES: ", sum(df.Quantidade_Equipes_CNES))
-    println("  - Total de equipes adicionais (fluxo): ", sum(df.Valor_Variavel_Fluxo))
-    println("  - Total geral de equipes: ", sum(df.Total_Equipes))
-    
-    return df
+
+    println("Aba 'Equipes_Criadas' adicionada com sucesso!")
+    return df_created
 end
 
 """
@@ -1106,164 +1288,6 @@ function create_optimization_model_maximal_coverage(indices::ModelIndices, param
 end
 
 
-function create_optimization_model_maximal_coverage_per_equipes(indices::ModelIndices, parameters::ModelParameters, mun_data::MunicipalityData)::Model
-    S_n1 = indices.S_n1
-    S_n2 = indices.S_n2
-    S_n3 = indices.S_n3
-    S_locais_candidatos_n1 = indices.S_Locais_Candidatos_n1
-    S_instalacoes_reais_n1 = indices.S_instalacoes_reais_n1
-    S_instalacoes_reais_n2 = indices.S_instalacoes_reais_n2
-    S_instalacoes_reais_n3 = indices.S_instalacoes_reais_n3
-    S_Pontos_Demanda = indices.S_Pontos_Demanda
-    S_equipes = indices.S_equipes_n1
-    S_equipes_n2 = indices.S_equipes_n2
-    S_equipes_n3 = indices.S_equipes_n3
-    S_pacientes =  mun_data.constantes.S_pacientes
-    S_Valor_Demanda = mun_data.S_Valor_Demanda
-    porcentagem_populacao = mun_data.constantes.porcentagem_populacao
-    S_IVS = parameters.IVS
-
-    dominio_atr_n1 = parameters.S_domains.dominio_n1
-
-    #TODO: Retomar workarround de locais candidatos que atendam os pontos sem nenhum opcao no raio critico!
-    dominio_candidatos_n1 = Dict(d => [s for s in dominio_atr_n1[d] if s in S_locais_candidatos_n1] for d in keys(dominio_atr_n1))
-
-    dominio_atr_n2 = parameters.S_domains.dominio_n2
-    dominio_atr_n3 = parameters.S_domains.dominio_n3
-    
-    percent_n1_n2 = mun_data.constantes.percent_n1_n2
-    percent_n2_n3 = mun_data.constantes.percent_n2_n3
-
-    Cap_n1 = mun_data.constantes.Cap_n1
-    Cap_n2 = mun_data.constantes.Cap_n2
-    Cap_n3 = mun_data.constantes.Cap_n3
-
-
-    capacidade_maxima_por_equipe_n1 = parameters.capacidade_maxima_por_equipe_n1
-    capacidade_maxima_por_equipe_n2 = parameters.S_eq_por_paciente_n2
-    capacidade_maxima_por_equipe_n3 = parameters.S_eq_por_paciente_n3
-
-    S_custo_equipe_n1 = parameters.S_custo_equipe_n1
-    S_custo_equipe_n2 = parameters.S_custo_equipe_n2
-    S_custo_equipe_n3 = parameters.S_custo_equipe_n3
-
-    S_capacidade_CNES_n1 = parameters.S_capacidade_CNES_n1
-    S_capacidade_CNES_n2 = parameters.S_capacidade_CNES_n2
-    S_capacidade_CNES_n3 = parameters.S_capacidade_CNES_n3
-
-    Matriz_Dist_n1 = parameters.S_Matriz_Dist.Matriz_Dist_n1
-    Matriz_Dist_n2 = parameters.S_Matriz_Dist.Matriz_Dist_n2
-    Matriz_Dist_n3 = parameters.S_Matriz_Dist.Matriz_Dist_n3
-
-    custo_deslocamento = mun_data.constantes.custo_transporte  
-    Custo_abertura_n1 = mun_data.constantes.custo_abertura_n1
-    Custo_abertura_n2 = mun_data.constantes.custo_abertura_n2
-    Custo_abertura_n3 = mun_data.constantes.custo_abertura_n3
-
-    S_custo_variavel_n1 = mun_data.constantes.S_custo_variavel_n1
-    S_custo_variavel_n2 = mun_data.constantes.S_custo_variavel_n2
-    S_custo_variavel_n3 = mun_data.constantes.S_custo_variavel_n3
-
-    S_custo_fixo_n1 = mun_data.constantes.S_custo_fixo_n1
-    S_custo_fixo_n2 = mun_data.constantes.S_custo_fixo_n2
-    S_custo_fixo_n3 = mun_data.constantes.S_custo_fixo_n3
-
-    S_quantidade_total_real_equipes = Vector{Int64}([sum(S_capacidade_CNES_n1[:,eq]) for eq in S_equipes])
-    vls_eq = [100, 200, 300, 100, 20, 40, 50, 70, 90, 30, 11]
-    Orcamento_Maximo = 200000000
-
-
-    #Novo metodo das equipes
-    eqs_ESF = [23, 70, 76, 72, 22, 1]
-    equipes_ESF_filtradas = filter(row -> row.TP_EQUIPE in eqs_ESF && row.ST_ATIVA == 1, mun_data.equipes_primario_v2)
-    
-    # Garantir ordem correspondente entre códigos e capacidades
-    # Opção 1: Usar vetores paralelos (mais simples)
-    CNES_Equipes_n1 = [row.CO_EQUIPE for row in eachrow(equipes_ESF_filtradas)] #Lista com codigo de cada equipe!
-    Cap_Equipes_n1 = [row.PARAMETRO_CADASTRAL for row in eachrow(equipes_ESF_filtradas)] #Capacidade da equipe!
-    S_qntd_Equipes_reais = length(CNES_Equipes_n1)
-    S_Equipes_Reais_n1 = collect(1:S_qntd_Equipes_reais)
-    S_equipes_candidatas = collect(S_qntd_Equipes_reais + 1: S_qntd_Equipes_reais + 30)
-    S_Equipes_n1 = collect(1: S_qntd_Equipes_reais + 30)
-    S_cap_equipes_candidadatas = fill(3000, length(S_equipes_candidatas))
-    S_cap_equipes_final = vcat(Cap_Equipes_n1, S_cap_equipes_candidadatas)
-
-    pontos_sem_cobertura = [d for d in S_Pontos_Demanda if isempty(dominio_atr_n1[d])]
-
-    model = Model(HiGHS.Optimizer)
-    set_optimizer_attribute(model, "time_limit", 3600.0)
-    # --- variáveis (mantendo seus nomes) ---
-    @variable(model, Atend_D_E_Ubs[d in S_Pontos_Demanda,
-                                eq in S_Equipes_n1,
-                                n1 in dominio_atr_n1[d]], Bin)
-
-    @variable(model, Aloc_E_Ubs[eq in S_Equipes_n1, n1 in S_n1], Bin)
-
-    @variable(model, Aloc_Ubs[n1 in S_n1], Bin)
-
-    # agora pop_atendida é >= 0 (use Int se quiser contar pessoas inteiras)
-    @variable(model, pop_atendida[d in S_Pontos_Demanda,
-                                eq in S_Equipes_n1,
-                                n1 in dominio_atr_n1[d]] >= 0)
-
-    # (suas variáveis de abertura / equipes extras seguem iguais)
-    @variable(model, var_abr_n1[n1 in S_n1], Bin)
-    @variable(model, var_eqs_extras[eq in S_equipes_candidatas] >= 0, Int)
-    
-
-    # um ponto pode ser atendido por no máximo UMA equipe/UBS
-    @constraint(model, [d in S_Pontos_Demanda],
-        sum(Atend_D_E_Ubs[d, eq, n1] for eq in S_Equipes_n1, n1 in dominio_atr_n1[d]) <= 1)
-
-
-    @constraint(model, [d in S_Pontos_Demanda, eq in S_Equipes_n1, n1 in dominio_atr_n1[d]],
-        Atend_D_E_Ubs[d, eq, n1] <= Aloc_E_Ubs[eq, n1])
-
-
-    @constraint(model, [d in S_Pontos_Demanda, eq in S_Equipes_n1, n1 in dominio_atr_n1[d]],
-        pop_atendida[d, eq, n1] <= S_Valor_Demanda[d] * Atend_D_E_Ubs[d, eq, n1])
-
-    # (5) opcional: também é conveniente forçar pop_atendida <= S_Valor_Demanda (redundante, mas claro)
-    @constraint(model, [d in S_Pontos_Demanda, eq in S_Equipes_n1, n1 in dominio_atr_n1[d]],
-        pop_atendida[d, eq, n1] <= S_Valor_Demanda[d])
-
-    # (6) capacidade por equipe usando pop_atendida
-    @constraint(model, [eq in S_Equipes_n1],
-        sum(pop_atendida[d, eq, n1] for d in S_Pontos_Demanda, n1 in dominio_atr_n1[d]) <= S_cap_equipes_final[eq])
-
-    # (7) abertura de UBS / equipes (mantém suas regras)
-    @constraint(model, [d in S_Pontos_Demanda, s in dominio_candidatos_n1[d]], 
-                        sum(Atend_D_E_Ubs[d, s] for eq in S_Equipes_n1) <= var_abr_n1[s] * 100000)
-
-
-    @constraint(model, [eq in S_equipes_candidatas, n1 in S_n1],
-        Aloc_E_Ubs[eq, n1] <= var_eqs_extras[eq])
-    
-    # ---------------------------------------------------------
-    @objective(model, Max,
-    sum(pop_atendida[d, eq, un] * S_IVS[d]
-        for d in S_Pontos_Demanda, eq in S_Equipes_n1, un in S_n1 if un in dominio_atr_n1[d]))
-    # Otimizar
-    optimize!(model)
-    
-    println("Objetivo = ", objective_value(model))
-    for d in S_Pontos_Demanda, e in S_Equipes_n1, u in dominio_atr_n1[d]
-        if value(Atend_D_E_Ubs[d,e,u]) > 0.5
-            println("Demanda $d atendida pela equipe $e na UBS $u")
-        end
-    end
-    for u in S_n1
-        if value(Aloc_Ubs[u]) > 0.5
-            println("UBS aberta: $u")
-        end
-    end 
-    for e in S_equipes_candidatas
-        println("Equipes_extra[$e] = ", value(Equipes_extra[e]))
-    end
-
-end
-
-
 function diagnosticar_infeasibility(model, indices, mun_data, parameters)
     println("=== DIAGNÓSTICO DE INFEASIBILITY ===")
     
@@ -1333,4 +1357,615 @@ function diagnosticar_infeasibility(model, indices, mun_data, parameters)
     end
     
     return pontos_sem_cobertura, demanda_total > capacidade_total, custo_minimo > 2000000, problemas_equipes > 0
+end
+
+
+function create_optimization_model_maximal_coverage_fluxo_equipes(indices::ModelIndices, parameters::ModelParameters, mun_data::MunicipalityData)::Model
+
+    # Extrair dados para facilitar a leitura e escrita do modelo!
+    S_n1 = indices.S_n1
+    S_n2 = indices.S_n2
+    S_n3 = indices.S_n3
+    S_locais_candidatos_n1 = indices.S_Locais_Candidatos_n1
+    S_instalacoes_reais_n1 = indices.S_instalacoes_reais_n1
+    S_instalacoes_reais_n2 = indices.S_instalacoes_reais_n2
+    S_instalacoes_reais_n3 = indices.S_instalacoes_reais_n3
+    S_Pontos_Demanda = indices.S_Pontos_Demanda
+    S_equipes = indices.S_equipes_n1
+    S_equipes_n2 = indices.S_equipes_n2
+    S_equipes_n3 = indices.S_equipes_n3
+    S_pacientes =  mun_data.constantes.S_pacientes
+    S_Valor_Demanda = mun_data.S_Valor_Demanda
+    porcentagem_populacao = mun_data.constantes.porcentagem_populacao
+    S_IVS = parameters.IVS
+
+    dominio_atr_n1 = parameters.S_domains.dominio_n1
+
+    #TODO: Retomar workarround de locais candidatos que atendam os pontos sem nenhum opcao no raio critico!
+    dominio_candidatos_n1 = Dict(d => [s for s in dominio_atr_n1[d] if s in S_locais_candidatos_n1] for d in keys(dominio_atr_n1))
+
+    dominio_atr_n2 = parameters.S_domains.dominio_n2
+    dominio_atr_n3 = parameters.S_domains.dominio_n3
+    
+    percent_n1_n2 = mun_data.constantes.percent_n1_n2
+    percent_n2_n3 = mun_data.constantes.percent_n2_n3
+
+    Cap_n1 = mun_data.constantes.Cap_n1
+    Cap_n2 = mun_data.constantes.Cap_n2
+    Cap_n3 = mun_data.constantes.Cap_n3
+
+
+    capacidade_maxima_por_equipe_n1 = parameters.capacidade_maxima_por_equipe_n1
+    capacidade_maxima_por_equipe_n2 = parameters.S_eq_por_paciente_n2
+    capacidade_maxima_por_equipe_n3 = parameters.S_eq_por_paciente_n3
+
+    S_custo_equipe_n1 = parameters.S_custo_equipe_n1
+    S_custo_equipe_n2 = parameters.S_custo_equipe_n2
+    S_custo_equipe_n3 = parameters.S_custo_equipe_n3
+
+    S_capacidade_CNES_n1 = parameters.S_capacidade_CNES_n1
+    S_capacidade_CNES_n1 = vcat(S_capacidade_CNES_n1, [0.0,0.0])
+    S_capacidade_CNES_n2 = parameters.S_capacidade_CNES_n2
+    S_capacidade_CNES_n3 = parameters.S_capacidade_CNES_n3
+
+    Matriz_Dist_n1 = parameters.S_Matriz_Dist.Matriz_Dist_n1
+    Matriz_Dist_n2 = parameters.S_Matriz_Dist.Matriz_Dist_n2
+    Matriz_Dist_n3 = parameters.S_Matriz_Dist.Matriz_Dist_n3
+
+    custo_deslocamento = mun_data.constantes.custo_transporte  
+    Custo_abertura_n1 = mun_data.constantes.custo_abertura_n1
+    Custo_abertura_n2 = mun_data.constantes.custo_abertura_n2
+    Custo_abertura_n3 = mun_data.constantes.custo_abertura_n3
+
+    S_custo_variavel_n1 = mun_data.constantes.S_custo_variavel_n1
+    S_custo_variavel_n2 = mun_data.constantes.S_custo_variavel_n2
+    S_custo_variavel_n3 = mun_data.constantes.S_custo_variavel_n3
+
+    S_custo_fixo_n1 = mun_data.constantes.S_custo_fixo_n1
+    S_custo_fixo_n2 = mun_data.constantes.S_custo_fixo_n2
+    S_custo_fixo_n3 = mun_data.constantes.S_custo_fixo_n3
+
+    Orcamento_Maximo = parameters.orcamento_maximo
+    ponderador_Vulnerabilidade = parameters.ponderador_Vulnerabilidade
+    S_IVS = ponderador_Vulnerabilidade .* parameters.IVS
+
+    S_Equipes_ESF =  indices.S_Equipes_ESF
+    S_Equipes_ESB =  indices.S_Equipes_ESB
+    
+    S_origem_equipes_ESB = indices.S_origem_equipes_ESB
+    S_origem_equipes_ESF = indices.S_origem_equipes_ESF
+
+
+    cap_equipes_n1 = 3000
+
+    model = Model(HiGHS.Optimizer)
+    set_optimizer_attribute(model, "time_limit", 300.0)
+    set_optimizer_attribute(model, "primal_feasibility_tolerance", 1e-6) 
+    set_optimizer_attribute(model, "mip_rel_gap", 0.02) 
+    #Variaveis
+    S_equipes = [1]
+    #atribuicao primária
+    aloc_n1 = @variable(model, Aloc_[d in S_Pontos_Demanda, n1 in dominio_atr_n1[d]], Bin)
+    var_abr_n1 = @variable(model, Abr_n1[n1 in S_n1], Bin) #Abertura unidades primárias
+    #Tipo_equipe (ESF OU ESB), Indice da equipe, destino!
+    #TODO - v0 so com ESF!!
+
+    fluxo_eq_ESF_n1 = @variable(model, eq_n1[eq in S_Equipes_ESF, n1 in S_n1], Bin) #Possibilidade de dividir a equipe ?
+    eqs_criadas_n1 = @variable(model, eq_ESF_criadas[n1 in S_n1] >= 0)
+    var_pop_atendida = @variable(model, pop_atendida[d in S_Pontos_Demanda, eq in S_equipes, n1 in dominio_atr_n1[d]] >= 0) #Inserir aqui as demografias das populacoes!
+    
+    #inicialmente vou somente encaminhar demanda para niveis superiore
+    #Fluxo n2
+    fluxo_n2 = @variable(model, X_n2[n1 in S_n1, n2 in dominio_atr_n2[n1]] >= 0)
+    var_abr_n2 = @variable(model, Abr_n2[n2 in S_n2] == 1, Bin)
+    #Fluxo n3
+    fluxo_n3 = @variable(model, X_n3[n2 in S_n2, n3 in dominio_atr_n3[n2]] >= 0)
+    var_abr_n3 = @variable(model, Abr_n3[n3 in S_n3] == 1, Bin)
+
+    #Todas as unidades devem ser alocadas numa UBS de referencia
+    @constraint(model, [d in S_Pontos_Demanda], sum(Aloc_[d, n1] for n1 in dominio_atr_n1[d]) == 1)
+    @constraint(model, [d in S_Pontos_Demanda, eq in S_equipes, n1 in dominio_atr_n1[d]], var_pop_atendida[d, eq, n1] <= aloc_n1[d, n1] * maximum(S_Valor_Demanda))
+    @constraint(model, [d in S_Pontos_Demanda, eq in S_equipes], sum(var_pop_atendida[d, eq, n1] for n1 in dominio_atr_n1[d]) <= S_Valor_Demanda[d])
+    
+    
+
+    #Uma equipe so pode ser alocada em no maximo uma unidade!
+    @constraint(model, [eq in S_Equipes_ESF], sum(eq_n1[eq, n1] for n1 in S_n1) <= 1)
+
+    #Mudar indice para S_Equipes quando tiver 2 implementacoes - ESF e ESB
+    @constraint(model, [n1 in S_n1], sum(var_pop_atendida[d, eq, n1] for eq in S_equipes, d in S_Pontos_Demanda if n1 in dominio_atr_n1[d]) 
+            <= (sum(eq_n1[eq, n1] for eq in S_Equipes_ESF) + eqs_criadas_n1[n1]) * 3000)
+
+
+    #Abertura de unidades novas:
+    @constraint(model, [d in S_Pontos_Demanda, s in dominio_candidatos_n1[d]], 
+                         Aloc_[d, s] <= var_abr_n1[s] )
+
+
+    #tambem preciso remover diminuir as equipes! - Posso assumir que se a equipe tiver custo negativo ela foi removida do sistema ?
+
+    #Abertura de UBS candidatos!
+    @expression(model, custo_contratacao_equipes_esf, sum(eq_ESF_criadas[n1] for n1 in S_n1) * 25000)
+    @expression(model, custo_realocaca_equipes, sum((Matriz_Dist_n1[S_origem_equipes_ESF[eq], n1] * eq_n1[eq, n1]) * 10  for eq in S_Equipes_ESF, n1 in S_n1 ))
+
+    #Posso ter equipes que nao sao alocadas em nenhum local e por isso nao custam para o sistema!
+    @expression(model, custo_mensal_equipes, sum(eq_n1[eq, n1] * 11000 for eq in S_Equipes_ESF, n1 in S_n1))
+
+
+    @expression(model, custo_fixo, sum(S_custo_fixo_n1 for un1 in S_instalacoes_reais_n1) + sum(Abr_n1[un] * S_custo_fixo_n1 for un in S_locais_candidatos_n1))
+    @expression(model, custo_variavel_n1, sum(pop_atendida[d, eq,  un] * S_custo_variavel_n1[1] for d in S_Pontos_Demanda, eq in S_equipes, un in S_n1 if un in dominio_atr_n1[d]))
+    
+    
+    
+    @expression(model, custo_total_n1,
+    + custo_contratacao_equipes_esf 
+    + custo_realocaca_equipes
+    + custo_mensal_equipes 
+    + custo_fixo
+    + custo_variavel_n1)
+
+
+    @constraint(model, custo_total_n1 <= Orcamento_Maximo * 10)
+
+
+    #Fluxo de nivel Secundario!
+    @constraint(model, [n1 in S_n1], 
+                sum(X_n2[n1, n2] for n2 in dominio_atr_n2[n1]) == percent_n1_n2 * sum(pop_atendida[d, eq, n1] 
+                        for  eq in S_equipes, d in S_Pontos_Demanda if n1 in dominio_atr_n1[d]))
+
+
+    #Fluxo de nivel Terciario!
+    @constraint(model, [n2 in S_n2], 
+            sum(X_n3[n2, n3] for n3 in dominio_atr_n3[n2]) == 
+            percent_n2_n3 * sum(X_n2[n1, n2] for n1 in S_n1 if n2 in dominio_atr_n2[n1]))
+                    
+
+    #Funcao Objetivo:
+    @objective(model, Max, sum(pop_atendida[d, eq, un] * S_IVS[d] for d in S_Pontos_Demanda, eq in S_equipes, un in S_n1 if un in dominio_atr_n1[d]) 
+    #+ sum(var_equidade[eq] * vls_eq[eq] for eq in S_equipes)
+    )
+
+    optimize!(model)
+    obj = objective_value(model)
+    println(obj)
+    println(value(custo_total_n1))
+    println(value(custo_realocaca_equipes)) #
+    println(value(custo_mensal_equipes))
+
+
+    # Printar os valores da variável eq_n1
+    println("Valores da variável eq_n1:")
+    for eq in S_Equipes_ESF, n1 in S_n1
+        if value(eq_n1[eq, n1]) > 0
+            println("eq $(eq) - Origem: $(S_origem_equipes_ESF[eq])  - Destino: $(n1)] = ", value(eq_n1[eq, n1]))
+        end
+    end
+
+    for n1 in S_n1
+        println("unidade [$(n1)]", value(eq_ESF_criadas[n1]))
+    end
+
+
+
+
+    return model
+
+end
+
+
+function create_optimization_model_maximal_coverage_fluxo_equipes_ESF_e_ESB_Juntas(indices::ModelIndices, parameters::ModelParameters, mun_data::MunicipalityData)::Model
+
+    # Extrair dados para facilitar a leitura e escrita do modelo!
+    S_n1 = indices.S_n1
+    S_n2 = indices.S_n2
+    S_n3 = indices.S_n3
+    S_locais_candidatos_n1 = indices.S_Locais_Candidatos_n1
+    S_instalacoes_reais_n1 = indices.S_instalacoes_reais_n1
+    S_instalacoes_reais_n2 = indices.S_instalacoes_reais_n2
+    S_instalacoes_reais_n3 = indices.S_instalacoes_reais_n3
+    S_Pontos_Demanda = indices.S_Pontos_Demanda
+
+    S_equipes_n2 = indices.S_equipes_n2
+    S_equipes_n3 = indices.S_equipes_n3
+    S_pacientes =  mun_data.constantes.S_pacientes
+    S_Valor_Demanda = mun_data.S_Valor_Demanda
+    porcentagem_populacao = mun_data.constantes.porcentagem_populacao
+    S_IVS = parameters.IVS
+
+    dominio_atr_n1 = parameters.S_domains.dominio_n1
+
+    #TODO: Retomar workarround de locais candidatos que atendam os pontos sem nenhum opcao no raio critico!
+    dominio_candidatos_n1 = Dict(d => [s for s in dominio_atr_n1[d] if s in S_locais_candidatos_n1] for d in keys(dominio_atr_n1))
+
+    dominio_atr_n2 = parameters.S_domains.dominio_n2
+    dominio_atr_n3 = parameters.S_domains.dominio_n3
+    
+    percent_n1_n2 = mun_data.constantes.percent_n1_n2
+    percent_n2_n3 = mun_data.constantes.percent_n2_n3
+
+    Cap_n1 = mun_data.constantes.Cap_n1
+    Cap_n2 = mun_data.constantes.Cap_n2
+    Cap_n3 = mun_data.constantes.Cap_n3
+
+
+    capacidade_maxima_por_equipe_n1 = parameters.capacidade_maxima_por_equipe_n1
+    capacidade_maxima_por_equipe_n2 = parameters.S_eq_por_paciente_n2
+    capacidade_maxima_por_equipe_n3 = parameters.S_eq_por_paciente_n3
+
+    S_custo_equipe_n1 = parameters.S_custo_equipe_n1
+    S_custo_equipe_n2 = parameters.S_custo_equipe_n2
+    S_custo_equipe_n3 = parameters.S_custo_equipe_n3
+
+    S_capacidade_CNES_n1 = parameters.S_capacidade_CNES_n1
+    S_capacidade_CNES_n1 = vcat(S_capacidade_CNES_n1, [0.0,0.0])
+    S_capacidade_CNES_n2 = parameters.S_capacidade_CNES_n2
+    S_capacidade_CNES_n3 = parameters.S_capacidade_CNES_n3
+
+    Matriz_Dist_n1 = parameters.S_Matriz_Dist.Matriz_Dist_n1
+    Matriz_Dist_n2 = parameters.S_Matriz_Dist.Matriz_Dist_n2
+    Matriz_Dist_n3 = parameters.S_Matriz_Dist.Matriz_Dist_n3
+
+    custo_deslocamento = mun_data.constantes.custo_transporte  
+    Custo_abertura_n1 = mun_data.constantes.custo_abertura_n1
+    Custo_abertura_n2 = mun_data.constantes.custo_abertura_n2
+    Custo_abertura_n3 = mun_data.constantes.custo_abertura_n3
+
+    S_custo_variavel_n1 = mun_data.constantes.S_custo_variavel_n1
+    S_custo_variavel_n2 = mun_data.constantes.S_custo_variavel_n2
+    S_custo_variavel_n3 = mun_data.constantes.S_custo_variavel_n3
+
+    S_custo_fixo_n1 = mun_data.constantes.S_custo_fixo_n1
+    S_custo_fixo_n2 = mun_data.constantes.S_custo_fixo_n2
+    S_custo_fixo_n3 = mun_data.constantes.S_custo_fixo_n3
+
+    Orcamento_Maximo = parameters.orcamento_maximo
+    ponderador_Vulnerabilidade = parameters.ponderador_Vulnerabilidade
+    S_IVS = ponderador_Vulnerabilidade .* parameters.IVS
+
+    S_Equipes_ESF =  indices.S_Equipes_ESF
+    S_Equipes_ESB =  indices.S_Equipes_ESB
+    S_Equipes_ENASF = indices.S_Equipes_ENASF
+    
+    S_origem_equipes_ESB = indices.S_origem_equipes_ESB
+    S_origem_equipes_ESF = indices.S_origem_equipes_ESF
+    S_origem_equipes_ENASF = indices.S_origem_equipes_ENASF #EQUIPE - NASF
+    S_equipes = [1,2]
+
+    cap_equipes_n1 = 3000
+
+    model = Model(HiGHS.Optimizer)
+    set_optimizer_attribute(model, "time_limit", 2000.0)
+    set_optimizer_attribute(model, "primal_feasibility_tolerance", 1e-3) 
+    set_optimizer_attribute(model, "mip_rel_gap", 0.02) 
+    #Variaveis
+
+    #atribuicao primária
+    aloc_n1 = @variable(model, Aloc_[d in S_Pontos_Demanda, n1 in dominio_atr_n1[d]], Bin)
+    var_abr_n1 = @variable(model, Abr_n1[n1 in S_n1], Bin) #Abertura unidades primárias
+    #Tipo_equipe (ESF OU ESB), Indice da equipe, destino!
+    #TODO - v0 so com ESF!!
+
+    fluxo_eq_ESF_n1 = @variable(model, eq_ESF_n1[eq in S_Equipes_ESF, n1 in S_n1], Bin)
+    eqs_criadas_n1 = @variable(model, eq_ESF_criadas[n1 in S_n1] >= 0)
+
+    
+    fluxo_eq_ESB_n1 = @variable(model, eq_ESB_n1[eq in S_Equipes_ESB, n1 in S_n1], Bin) 
+    eqs_ESB_criadas_n1 = @variable(model, eq_ESB_criadas[n1 in S_n1] >= 0)
+    
+    # Variáveis para alocação de equipes ENASF e ESF para ENASF
+    eq_ENASF = @variable(model, eq_ENASF[n1 in S_n1, eq_esf in S_Equipes_ESF, eq_dest in S_Equipes_ENASF], Bin)
+    eq_ENASF_UBS = @variable(model, eq_ENASF_UBS[n1 in S_n1, eq_dest in S_Equipes_ENASF], Bin)
+    eq_ENASF_criadas = @variable(model, eq_ENASF_criadas[n1 in S_n1], Bin)
+
+
+    var_pop_atendida = @variable(model, pop_atendida[d in S_Pontos_Demanda, eq in S_equipes, n1 in dominio_atr_n1[d]] >= 0) 
+    #var_pop_atendida_EMULTI = @variable(model, pop_atendida_EMULTI[n1 in S_n1, eq in S_Equipes_ENASF] >= 0)
+
+
+    #inicialmente vou somente encaminhar demanda para niveis superiore
+    #Fluxo n2
+    fluxo_n2 = @variable(model, X_n2[n1 in S_n1, n2 in dominio_atr_n2[n1]] >= 0)
+    var_abr_n2 = @variable(model, Abr_n2[n2 in S_n2] == 1, Bin)
+    #Fluxo n3
+    fluxo_n3 = @variable(model, X_n3[n2 in S_n2, n3 in dominio_atr_n3[n2]] >= 0)
+    var_abr_n3 = @variable(model, Abr_n3[n3 in S_n3] == 1, Bin)
+
+    #Todas as unidades devem ser alocadas numa UBS de referencia
+
+    @constraint(model, [d in S_Pontos_Demanda], sum(Aloc_[d, n1] for n1 in dominio_atr_n1[d]) <= 1) #TODO: FLexibilizei a territorializacao para nao abrir unidades alem do orcamento!!
+    @constraint(model, [d in S_Pontos_Demanda, eq in S_equipes, n1 in dominio_atr_n1[d]], var_pop_atendida[d, eq, n1] <= aloc_n1[d, n1] * maximum(S_Valor_Demanda))
+    @constraint(model, [d in S_Pontos_Demanda, eq in S_equipes], sum(var_pop_atendida[d, eq, n1] for n1 in dominio_atr_n1[d]) <= S_Valor_Demanda[d])
+    @constraint(model, [n1 in S_instalacoes_reais_n1], Abr_n1[n1] == 1)
+   
+
+    #Uma equipe so pode ser alocada em no maximo uma unidade! - Usa caso variaveis sejam continuas
+
+    #@constraint(model, [eq in S_Equipes_ESF], sum(eq_ESF_n1[eq, n1] for n1 in S_n1) <= 1)
+    #@constraint(model, [eq in S_Equipes_ESB], sum(eq_ESB_n1[eq, n1] for n1 in S_n1) <= 1)
+
+    # Restrições para alocação de equipes ENASF e ESF para ENASF
+    
+
+
+    # 2. Cada equipe ESF deve ser alocada a no maximo uma equipe ENASF ou numa equipe contratada!
+    @constraint(model, [eq_esf in S_Equipes_ESF], 
+        sum(eq_ENASF[n1, eq_esf, eq_dest] for n1 in S_n1, eq_dest in S_Equipes_ENASF) <= 1) #TODO: Inserir na FO a cobertura 
+
+
+    # 3. Cada equipe ENASF pode receber no máximo 9 equipe ESF
+    @constraint(model, [n1 in S_n1, eq_dest in S_Equipes_ENASF], 
+        sum(eq_ENASF[n1, eq_esf, eq_dest] for eq_esf in S_Equipes_ESF) <= 9) #Apos ter o pos-OTM, voltar a pensar como adicionar EMULTI criadas.
+    
+
+    #So posso alocar equipes se EMULTI estiver alocada na UBS!
+    @constraint(model, [n1 in S_n1, eq_dest in S_Equipes_ENASF], 
+        sum(eq_ENASF[n1, eq_esf, eq_dest] for eq_esf in S_Equipes_ESF) <= eq_ENASF_UBS[n1, eq_dest]) 
+
+
+    #Uma EMULTI so pode atender em uma UBS!
+    @constraint(model, [eq_dest in S_Equipes_ENASF], 
+            sum(eq_ENASF_UBS[n1, eq_dest] for n1 in S_n1) <= 1)
+
+    
+    #Cada unidade pode ter no maximo 1 EMULTI -  Nova ou Criada!
+    @constraint(model, [n1 in S_n1], 
+        sum(eq_ENASF_UBS[eq, n1] for eq in S_Equipes_ENASF) +  eq_ENASF_criadas[n1] <= 1) #Só posso criar uma EMULTI por UNIDADE!
+
+        #Limite por UBS!
+    
+
+    #Cada unidade pode ter no maximo 4 equipes ESF e 4 equipes ESB!
+    @constraint(model, [n1 in S_n1], 
+        (sum(eq_ESF_n1[eq, n1] for eq in S_Equipes_ESF) + eq_ESF_criadas[n1]) <= 4)
+
+
+    "
+    @constraint(model, [eq_enasf in S_Equipes_ENASF], 
+    
+                    var_pop_atendida_EMULTI[eq_enasf] 
+                    == sum(eq_ENASF[n1, eq_esf, eq_enasf] for n1 in S_n1, eq_esf in S_Equipes_ESF) * 3000 #Populacao coberta por cada ESF e assumi essa EMULT
+                     )
+
+
+    Entendo a ideia de melhor localizar as EMULTI nas unidades que minimizem a distancia total entre todas as UBS, porque
+    sao uma especie de atencao secundaria na atencao primaria. Porém a logica de implementar a mais proxima nao vai funcionar no contexto
+    do meu modelo.
+
+    Porque: 
+    1 - O problema consiste em instalar as Emulti nas localizacoes que minimizem a distancia total percorrida, e nao a unidade mais proxima
+    2 - Eu tenho acapacidade que pode tornar o problema inviavel.
+
+    Neste contexto vou optar por alocar as ESFs nas EMULTIs de forma a maxizar a populacao atendida por vulnerabilidade.
+    Se necessario posso fazer um outro modelo só de P-medianas classico para alocar as Emulti e usa-lo como parametro aqui, mas nao estou
+    conseguindo fazer essa alocacao dentro do meu modelo.
+
+
+    Num primeiro momento nao vou forcar a ideia de localizar a Emulti por distancia
+    for eq_esf in S_Equipes_ESF
+        origem_esf = S_origem_equipes_ESF[eq_esf]
+        
+        # Calcular distâncias para todas as equipes ENASF
+        distancias = Float64[]
+        for eq_dest in S_Equipes_ENASF
+            origem_enasp = S_origem_equipes_ENASF[eq_dest]
+            # Usar a matriz de distância entre unidades n1 (onde estão as origens das equipes)
+            distancia = Matriz_Dist_n1[origem_esf, origem_enasp]
+            push!(distancias, distancia)
+        end
+        
+        # Encontrar a distância mínima
+        distancia_minima = minimum(distancias)
+        
+        # Para cada equipe ENASF, se não for a mais próxima, não pode ser selecionada
+        for (idx_dest, eq_dest) in enumerate(S_Equipes_ENASF)
+            if distancias[idx_dest] > distancia_minima + 1e-6  # tolerância numérica
+                @constraint(model, eq_ESF_to_ENASF[eq_esf, eq_dest] <= 1 - Abr_n1[n1]) #Nao esta redundante com a restrica n1 ?
+            end
+        end
+    end
+
+    "
+
+
+    #Limite por equipes!
+    @constraint(model, [n1 in S_n1], sum(var_pop_atendida[d, 1, n1] for d in S_Pontos_Demanda if n1 in dominio_atr_n1[d]) 
+            <= (sum(eq_ESF_n1[eq, n1] for eq in S_Equipes_ESF) + eq_ESF_criadas[n1]) * 3000)
+
+
+    @constraint(model, [n1 in S_n1], sum(var_pop_atendida[d, 2, n1] for d in S_Pontos_Demanda if n1 in dominio_atr_n1[d]) 
+            <= (sum(eq_ESB_n1[eq, n1] for eq in S_Equipes_ESB) + eq_ESB_criadas[n1]) * 3000)
+
+
+
+
+    #TODO: Duvida importante: Pode ser que reduza recursos da ESF para aumentar a quantidade de ESB
+    @constraint(model, [n1 in S_n1], 
+        sum(eq_ESB_n1[eq, n1] for eq in S_Equipes_ESB) + eq_ESB_criadas[n1] == sum(eq_ESF_n1[eq, n1] for eq in S_Equipes_ESF) + eq_ESF_criadas[n1])
+
+
+    #Abertura de unidades novas:
+    @constraint(model, [d in S_Pontos_Demanda, s in dominio_candidatos_n1[d]], 
+                         Aloc_[d, s] <= var_abr_n1[s] )
+
+
+    #tambem preciso remover diminuir as equipes! - Posso assumir que se a equipe tiver custo negativo ela foi removida do sistema ?
+
+    #Abertura de UBS candidatos!
+    @expression(model, custo_contratacao_equipes_esf, sum(eq_ESF_criadas[n1] for n1 in S_n1) * 30000)
+    @expression(model, custo_realocaca_equipes_esf, sum((Matriz_Dist_n1[S_origem_equipes_ESF[eq], n1] * eq_ESF_n1[eq, n1]) * 100 for eq in S_Equipes_ESF, n1 in S_n1 ))
+    @expression(model, custo_mensal_equipes_esf, sum(eq_ESF_n1[eq, n1] * 32000 for eq in S_Equipes_ESF, n1 in S_n1) + sum(eq_ESF_criadas[n1] for n1 in S_n1) * 32000)
+
+
+    @expression(model, custo_contratacao_equipes_esb, sum(eq_ESB_criadas[n1] for n1 in S_n1) * 30000)
+    @expression(model, custo_realocaca_equipes_esb, sum((Matriz_Dist_n1[S_origem_equipes_ESB[eq], n1] * eq_ESB_n1[eq, n1]) * 100  for eq in S_Equipes_ESB, n1 in S_n1 ))
+    @expression(model, custo_mensal_equipes_esb, sum(eq_ESB_n1[eq, n1] * 32000 for eq in S_Equipes_ESB, n1 in S_n1) + sum(eq_ESB_criadas[n1] for n1 in S_n1) * 32000)
+
+
+    #@expression(model, custo_fixo, sum(S_custo_fixo_n1 for un1 in S_instalacoes_reais_n1) + sum(Abr_n1[un] * S_custo_fixo_n1 for un in S_locais_candidatos_n1))
+    #@expression(model, custo_variavel_n1, sum(pop_atendida[d, eq,  un] * S_custo_variavel_n1[1] for d in S_Pontos_Demanda, eq in S_equipes, un in S_n1 if un in dominio_atr_n1[d]))
+    
+    
+    
+    @expression(model, custo_total_n1,
+    + custo_contratacao_equipes_esf 
+    + custo_realocaca_equipes_esf
+    + custo_mensal_equipes_esf
+    + custo_contratacao_equipes_esb
+    + custo_realocaca_equipes_esb
+    + custo_mensal_equipes_esb
+    #+ custo_fixo - aluguel
+   # + custo_variavel_n1 - insumos e consumos
+    # + Custo de abertura - para nao abrir indiscriminadamente UBS - Amortizacao do imovel em 20 anos!
+    
+   )
+
+    @constraint(model, custo_total_n1 <= Orcamento_Maximo * 2)
+
+
+    #Fluxo de nivel Secundario!
+    @constraint(model, [n1 in S_n1], 
+                sum(X_n2[n1, n2] for n2 in dominio_atr_n2[n1]) == percent_n1_n2 * sum(pop_atendida[d, eq, n1] 
+                        for  eq in S_equipes, d in S_Pontos_Demanda if n1 in dominio_atr_n1[d]))
+
+
+    #Fluxo de nivel Terciario!
+    @constraint(model, [n2 in S_n2], 
+            sum(X_n3[n2, n3] for n3 in dominio_atr_n3[n2]) == 
+            percent_n2_n3 * sum(X_n2[n1, n2] for n1 in S_n1 if n2 in dominio_atr_n2[n1]))
+                    
+    
+    @expression(model, pop_atendida_ESF, sum(pop_atendida[d, 1, un] * S_IVS[d] for d in S_Pontos_Demanda, un in S_n1 if un in dominio_atr_n1[d]) )
+    @expression(model, pop_atendida_ESB, sum(pop_atendida[d, 2, un] * S_IVS[d] for d in S_Pontos_Demanda, un in S_n1 if un in dominio_atr_n1[d]) )
+
+    #DISCUTIR COM JOAO: Consigo considerar o IVS AQUI? - POR ENQUANTO NAO VOU CONSIDERAR!
+    @expression(model, pop_atendida_ENASF, sum(eq_ENASF[n1, eq_esf, eq_enasf] for n1 in S_n1, eq_esf in S_Equipes_ESF, eq_ENASF in S_Equipes_ENASF)  * 3000)
+    @expression(model, pop_atendida_total, pop_atendida_ESF + pop_atendida_ESB + pop_atendida_ENASF)
+    #Funcao Objetivo:
+    @objective(model, Max, pop_atendida_total)
+
+    # Coletar resultados das equipes ESF
+    eval_results = true
+    if eval_results == true
+        optimize!(model)
+        obj = objective_value(model)
+        esf_results = DataFrame(
+            Equipe = String[],
+            Origem = String[],
+            Destino = String[],
+            Valor = Float64[]
+        )
+
+        for eq in S_Equipes_ESF
+            for n1 in S_n1
+                val = value(eq_ESF_n1[eq, n1])
+                if val > 0
+                    push!(esf_results, (string(eq), string(S_origem_equipes_ESF[eq]), string(n1), val))
+                end
+            end
+        end
+
+        # Coletar resultados das equipes ESB
+        esb_results = DataFrame(
+            Equipe = String[],
+            Origem = String[],
+            Destino = String[],
+            Valor = Float64[]
+        )
+
+        for eq in S_Equipes_ESB
+            for n1 in S_n1
+                val = value(eq_ESB_n1[eq, n1])
+                if val > 0
+                    push!(esb_results, (string(eq), string(S_origem_equipes_ESB[eq]), string(n1), val))
+                end
+            end
+        end
+
+        println("Resultados das Equipes ESF:")
+        pretty_table(esf_results)
+
+        println("\nResultados das Equipes ESB:")
+        pretty_table(esb_results)
+        
+        for n1 in S_n1
+                val = value(eq_ESB_criadas[n1])
+                if val > 0
+                println("Equipe ESB na unidade $(n1): ", val)
+                end
+        end
+
+        for n1 in S_n1
+            val = value(eq_ESF_criadas[n1])
+            if val > 0
+            println("Equipe ESF na unidade $(n1): ", val)
+            end
+        end
+
+
+        # Mostrar total atendido por equipe (somando sobre todos os pontos de demanda e unidades)
+        println("Total atendido por equipe:")
+        for eq in S_equipes
+            total_eq = 0.0
+                for d in S_Pontos_Demanda, n1 in S_n1
+                    if n1 in dominio_atr_n1[d]
+                        total_eq += value(pop_atendida[d, eq, n1])
+                    end
+                end
+        end
+
+
+        for n1 in S_n1
+            if value(Abr_n1[n1]) > 0
+                println(n1)
+ 
+            end
+        end
+    end
+
+    # Restrições para alocação de equipes ENASF e ESF para ENASF
+    
+    # 1. Equipes ENASF só podem ser alocadas em unidades abertas
+    @constraint(model, [n1 in S_n1, eq_esf in S_Equipes_ESF, eq_dest in S_Equipes_ENASF], 
+        eq_ENASF[n1, eq_esf, eq_dest] <= Abr_n1[n1])
+
+    # 2. Cada equipe ESF deve ser alocada a exatamente uma equipe ENASF
+    @constraint(model, [eq_esf in S_Equipes_ESF], 
+        sum(eq_ESF_to_ENASF[eq_esf, eq_dest] for eq_dest in S_Equipes_ENASF) == 1)
+
+    # 3. Cada equipe ENASF pode receber no máximo uma equipe ESF
+    @constraint(model, [eq_dest in S_Equipes_ENASF], 
+        sum(eq_ESF_to_ENASF[eq_esf, eq_dest] for eq_esf in S_Equipes_ESF) <= 1)
+
+    # 4. Restrição de proximidade: equipe ESF só pode ser alocada à ENASF mais próxima
+    for eq_esf in S_Equipes_ESF
+        origem_esf = S_origem_equipes_ESF[eq_esf]
+        
+        # Calcular distâncias para todas as equipes ENASF
+        distancias = Float64[]
+        for eq_dest in S_Equipes_ENASF
+            origem_enasp = S_origem_equipes_ENASF[eq_dest]
+            # Usar a matriz de distância entre unidades n1 (onde estão as origens das equipes)
+            distancia = Matriz_Dist_n1[origem_esf, origem_enasp]
+            push!(distancias, distancia)
+        end
+        
+        # Encontrar a distância mínima
+        distancia_minima = minimum(distancias)
+        
+        # Para cada equipe ENASF, se não for a mais próxima, não pode ser selecionada
+        for (idx_dest, eq_dest) in enumerate(S_Equipes_ENASF)
+            if distancias[idx_dest] > distancia_minima + 1e-6  # tolerância numérica
+                @constraint(model, eq_ESF_to_ENASF[eq_esf, eq_dest] == 0)
+            end
+        end
+    end
+
+    # 5. Restrição adicional: equipe ESF só pode ser alocada à ENASF se ambas estiverem em unidades abertas
+    @constraint(model, [eq_esf in S_Equipes_ESF, eq_dest in S_Equipes_ENASF, n1 in S_n1], 
+        eq_ESF_to_ENASF[eq_esf, eq_dest] <= eq_ENASF[n1, eq_esf, eq_dest])
+
+    #Mudar indice para S_Equipes quando tiver 2 implementacoes - ESF e ESB
+
+    return model
+
 end

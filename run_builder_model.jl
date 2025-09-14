@@ -1,11 +1,10 @@
-using JuMP, HiGHS, JLD2, XLSX, DataFrames
+using JuMP, HiGHS, JLD2, XLSX, DataFrames, PrettyTables
 using Base: deepcopy 
 
 include("healthcare_model.jl")
 include("model_utils.jl")
 include("model_builder.jl")
 include("optimization_model.jl")
-
 
 function example_usage()
     # Carregar dados
@@ -29,17 +28,32 @@ function example_usage()
     
     # Configurar parâmetros específicos do cenário
     println("Configurando parâmetros do cenário...")
-    parameters.orcamento_maximo = 1000000.0
-    parameters.ponderador_Vulnerabilidade = 1
+    parameters.orcamento_maximo = 5000000.0
+    parameters.ponderador_Vulnerabilidade = 5
 
     println("Criando modelo de cobertura máxima")
-    model = create_optimization_model_maximal_coverage(indices, parameters, mun_data)
-    
+    #model = create_optimization_model_maximal_coverage(indices, parameters, mun_data)
+    model = create_optimization_model_maximal_coverage_fluxo_equipes_ESF_e_ESB_Juntas(indices, parameters, mun_data)
     println("Otimizando modelo...")
     optimize!(model)
     
     # Verificar se a otimização foi bem-sucedida
     if termination_status(model) == MOI.OPTIMAL
+            # Mostrar total atendido por equipe (somando sobre todos os pontos de demanda e unidades)
+    # println("Total atendido por equipe:")
+    pop_atendida = value.(model[:pop_atendida])
+        for eq in [1,2]
+            total_eq = 0.0
+           for d in indices.S_Pontos_Demanda, n1 in indices.S_n1
+               if n1 in parameters.S_domains.dominio_n1[d]
+                   total_eq += value(pop_atendida[d, eq, n1])
+               end
+           end
+          println("Equipe $(eq): ", total_eq)
+        end
+
+
+
         println("Otimização concluída com sucesso!")
         println("Valor da função objetivo: ", objective_value(model))
         
@@ -49,21 +63,26 @@ function example_usage()
         
         # Extrair resultados do fluxo de equipes
         println("\nExtraindo resultados do fluxo de equipes...")
-        team_flow_results = extract_team_flow_results(model, indices, parameters)
+        team_flow_results = extract_team_flow_results(model, indices, parameters, mun_data)
         
+        println("\nExtraindo resultados de equipes criadas...")
+        create_teams = extract_created_teams_df(model, indices, parameters, mun_data)
         # Extrair resultados dos custos
         println("\nExtraindo resultados dos custos...")
         cost_results = extract_cost_results(model)
         
-        # Exportar para Excel
-        filename = "Resultados_COBERTURA_MAXIMA_6.xlsx"
+       # Exportar para Excel
+        filename = "Resultados_COBERTURA_MAXIMA_19_END.xlsx"
         df_results = export_population_results_to_excel(population_results, filename)
         
-        # Adicionar dados do fluxo de equipes ao mesmo arquivo Excel
+        # Adicionar dados do fluxo de equipes (novo formato) ao mesmo arquivo Excel
         df_team_flow = add_team_flow_to_excel(team_flow_results, filename)
         
         # Adicionar dados dos custos ao mesmo arquivo Excel
-        df_costs = add_cost_results_to_excel(cost_results, filename)
+        #df_costs  = add_cost_results_to_excel(cost_results, filename)
+
+        # Adicionar equipes criadas ao mesmo arquivo Excel
+        df_created = add_created_teams_to_excel(create_teams, filename)
         
         # Salvar resultados completos
         #results = extract_results(model, indices)

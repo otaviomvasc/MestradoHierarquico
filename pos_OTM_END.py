@@ -6,11 +6,14 @@ from folium.plugins import (
     MeasureControl,
     Draw,
     OverlappingMarkerSpiderfier,
+    PolyLineTextPath,
 )
 import geopandas as gpd
 import seaborn as sns
 import matplotlib.pyplot as plt
+from matplotlib.colors import to_hex
 import plotly.express as px
+
 
 """
 classe que recebe dois arquivos excel
@@ -28,13 +31,19 @@ class posOTMFinal:
         self.dfs_otm_cobertura = dict()
         self.dfs_otm_fluxo_equipes = dict()
         self.dfs_otm_custos = dict()
+        self.df_abertura_equipes = dict()
+        self.dados_unidades = pd.read_excel(
+            r"C:\Users\marce\OneDrive\Área de Trabalho\MestradoHierarquico\dados_PRONTOS_para_modelo_OTM\instalacoes_primarias.xlsx"
+        )
         for cen, path in dicts_resultados_otimizacao.items():
             self.dfs_otm_cobertura[cen] = pd.read_excel(path, sheet_name="Sheet1")
             self.dfs_otm_fluxo_equipes[cen] = pd.read_excel(
-                path_resultados_otimizacao_1, sheet_name="Fluxo_Equipes"
+                path, sheet_name="Fluxo_Equipes"
             )
-            self.dfs_otm_custos[cen] = pd.read_excel(
-                path_resultados_otimizacao_1, sheet_name="Custos"
+
+            # self.dfs_otm_custos[cen] = pd.read_excel(path, sheet_name="Custos")
+            self.df_abertura_equipes[cen] = pd.read_excel(
+                path, sheet_name="Equipes_Criadas"
             )
 
         self.merge_dados_cobertura()
@@ -96,7 +105,107 @@ class posOTMFinal:
             print(f"Shape do df_baseline pos merge = {df_baseline.shape}")
         self.df_merge = df_baseline.copy()
 
-    def plota_mapa_cobertura_OTM(self, cen):
+    def resumo_cnes_fluxos(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Gera um resumo por CNES com:
+        - quantidade_equipes_origem: contagem de linhas de Origem_Equipe por CNES de origem
+        - quantidade_equipes_destino: soma de Valor_Variavel por CNES de destino
+
+        Retorna um DataFrame com colunas: ['cnes', 'quantidade_equipes_origem', 'quantidade_equipes_destino'].
+        """
+
+        def fix_cnes_candidatos(ubs_destino, indice_ubs, valor_v):
+            if ubs_destino == 0 and valor_v > 0:
+                return indice_ubs  # Setor censitario candidato que foi aberto!
+            return ubs_destino
+
+        df["cnes_UBS_destino"] = df.apply(
+            lambda x: fix_cnes_candidatos(
+                x.cnes_UBS_destino, x.Indice_UBS, x.Valor_Variavel
+            ),
+            axis=1,
+        )
+        cols_lower = {c: c.lower() for c in df.columns}
+        # Detecta colunas CNES de origem e destino de forma robusta a variações de nome
+        origem_cnes_col = next(
+            (
+                c
+                for c in df.columns
+                if ("cnes" in cols_lower[c] and "orig" in cols_lower[c])
+            ),
+            None,
+        )
+        destino_cnes_col = next(
+            (
+                c
+                for c in df.columns
+                if ("cnes" in cols_lower[c] and "dest" in cols_lower[c])
+            ),
+            None,
+        )
+        if origem_cnes_col is None:
+            raise KeyError(
+                "Coluna de CNES de origem não encontrada (ex.: 'cnes_ubs_origem')."
+            )
+        if destino_cnes_col is None:
+            raise KeyError(
+                "Coluna de CNES de destino não encontrada (ex.: 'cnes_UBS_destino')."
+            )
+
+        if "Origem_Equipe" not in df.columns:
+            raise KeyError("Coluna 'Origem_Equipe' não encontrada no DataFrame.")
+        if "Valor_Variavel" not in df.columns:
+            raise KeyError("Coluna 'Valor_Variavel' não encontrada no DataFrame.")
+
+        origem_counts = (
+            df.groupby(origem_cnes_col)["Origem_Equipe"].count().reset_index()
+        )
+        origem_counts = origem_counts.rename(
+            columns={
+                origem_cnes_col: "cnes",
+                "Origem_Equipe": "quantidade_equipes_origem",
+            }
+        )
+
+        destino_sums = (
+            df.groupby(destino_cnes_col)["Valor_Variavel"].sum().reset_index()
+        )
+        destino_sums = destino_sums.rename(
+            columns={
+                destino_cnes_col: "cnes",
+                "Valor_Variavel": "quantidade_equipes_destino",
+            }
+        )
+
+        resumo = origem_counts.merge(destino_sums, on="cnes", how="outer").fillna(0)
+        # Tipos
+        resumo["quantidade_equipes_origem"] = resumo[
+            "quantidade_equipes_origem"
+        ].astype(int)
+        # Mantém destino como float para suportar somas fracionárias caso existam
+        return resumo.sort_values("cnes").reset_index(drop=True)
+
+    def plota_mapa_base_setores(
+        self,
+        cen,
+        incluir_ubs=True,
+        cor_setor="#1f77b4",
+        mostrar_ivs=False,
+        ivs_palette="Reds",
+        marca_setores=False,
+    ):
+        """
+        Constrói um mapa base com os pontos dos setores censitários (e opcionalmente UBS).
+
+        - cen: nome do cenário para ler colunas Lat_Demanda_{cen}, Lon_Demanda_{cen}
+               e (opcionalmente) Lat_UBS_{cen}, Lon_UBS_{cen}.
+        - incluir_ubs: se True, adiciona marcadores das UBS (pretos) por cima.
+        - cor_setor: cor dos pontos dos setores.
+        - mostrar_ivs: se True, adiciona um fundo coroplético pelo IVS.
+        - ivs_palette: paleta para o IVS (ex.: "Reds").
+
+        Retorna: folium.Map
+        """
         cols_base = ["id_setor", "geometry"]
         cols_plot = [i for i in self.df_merge.columns if cen in i or i in cols_base]
         resultado = self.df_merge[cols_plot].copy()
@@ -110,38 +219,118 @@ class posOTMFinal:
                 ),
             )
 
-        map = folium.Map(
+        mapa_base = folium.Map(
             location=[self.lat_long_contagem[0], self.lat_long_contagem[1]],
             tiles="cartodbpositron",
             control_scale=True,
             prefer_canvas=True,
             zoom_start=11,
         )
-        # Pane para garantir UBS por cima de tudo
-        folium.map.CustomPane(name="ubs_top", z_index=650).add_to(map)
-        # Panes intermediários para pontos dos setores e linhas de ligação
-        folium.map.CustomPane(name="demanda_mid", z_index=635).add_to(map)
-        folium.map.CustomPane(name="links_mid", z_index=640).add_to(map)
-        # Camadas para visualização
+
+        # Panes para controlar ordem de sobreposição
+        folium.map.CustomPane(name="ubs_top", z_index=650).add_to(mapa_base)
+        folium.map.CustomPane(name="demanda_mid", z_index=635).add_to(mapa_base)
+
+        # Camadas
         ubs_layer = folium.FeatureGroup(name="Unidades de saúde")
         demanda_layer = folium.FeatureGroup(name="Setores (pontos)")
-        ligacao_layer = folium.FeatureGroup(name="Ligação Demanda → UBS")
-        # camadas serão adicionadas ao mapa mais adiante para garantir ordem visual
-        for index, cnes in resultado.iterrows():
-            try:
-                # Coordenadas UBS (aceita variações de nome)
-                lat_ubs = cnes.get(f"Lat_UBS_{cen}")
-                lon_ubs = cnes.get(f"Lon_UBS_{cen}")
+
+        # Fundo coroplético do IVS (opcional)
+        if mostrar_ivs:
+            col_ivs = (
+                f"IVS_{cen}"
+                if f"IVS_{cen}" in resultado.columns
+                else ("IVS" if "IVS" in resultado.columns else None)
+            )
+            if col_ivs is not None:
+                resultado_choropleth = resultado[["geometry", col_ivs]].copy()
+                if not isinstance(resultado_choropleth, gpd.GeoDataFrame):
+                    resultado_choropleth = gpd.GeoDataFrame(
+                        resultado_choropleth,
+                        geometry=(
+                            gpd.GeoSeries.from_wkt(resultado_choropleth["geometry"])
+                            if resultado_choropleth["geometry"].dtype == "O"
+                            else resultado_choropleth["geometry"]
+                        ),
+                    )
+                resultado_choropleth = resultado_choropleth.reset_index(drop=True)
+                resultado_choropleth["id"] = resultado_choropleth.index
+                if not resultado_choropleth.crs:
+                    resultado_choropleth.set_crs(epsg=4326, inplace=True)
+                elif resultado_choropleth.crs.to_epsg() != 4326:
+                    resultado_choropleth = resultado_choropleth.to_crs(epsg=4326)
+
+                min_val = float(resultado_choropleth[col_ivs].min())
+                max_val = float(resultado_choropleth[col_ivs].max())
+                quantis = [
+                    0.05,
+                    0.1,
+                    0.15,
+                    0.2,
+                    0.25,
+                    0.30,
+                    0.35,
+                    0.4,
+                    0.45,
+                    0.5,
+                    0.55,
+                    0.6,
+                    0.65,
+                    0.7,
+                    0.75,
+                    0.8,
+                    0.85,
+                    0.9,
+                    0.95,
+                ]
+                bins = (
+                    [min_val]
+                    + list(resultado_choropleth[col_ivs].quantile(quantis))
+                    + [max_val]
+                )
+                bins = sorted(list(set(bins)))
+
+                folium.Choropleth(
+                    geo_data=resultado_choropleth,
+                    name="IVS (fundo)",
+                    data=resultado_choropleth,
+                    columns=["id", col_ivs],
+                    key_on="feature.id",
+                    fill_color=ivs_palette,
+                    fill_opacity=0.6,
+                    line_opacity=0.3,
+                    line_color="black",
+                    line_weight=0.5,
+                    smooth_factor=0.8,
+                    nan_fill_color="LightGray",
+                    legend_name="Índice de Vulnerabilidade (IVS)",
+                    bins=bins,
+                ).add_to(mapa_base)
+        for _, row in resultado.iterrows():
+            # Coordenadas demanda
+            lat_dem = row.get(f"Lat_Demanda_{cen}")
+            lon_dem = row.get(f"Lon_Demanda_{cen}")
+            if pd.isna(lon_dem):
+                lon_dem = row.get(f"Long_Demanda_{cen}")
+            if marca_setores:
+                if pd.notna(lat_dem) and pd.notna(lon_dem):
+                    folium.CircleMarker(
+                        location=[lat_dem, lon_dem],
+                        radius=2,
+                        color=cor_setor,
+                        fill=True,
+                        fill_color=cor_setor,
+                        fill_opacity=0.9,
+                        opacity=0.9,
+                        weight=0,
+                        pane="demanda_mid",
+                    ).add_to(demanda_layer)
+
+            if incluir_ubs:
+                lat_ubs = row.get(f"Lat_UBS_{cen}")
+                lon_ubs = row.get(f"Lon_UBS_{cen}")
                 if pd.isna(lon_ubs):
-                    lon_ubs = cnes.get(f"Long_UBS_{cen}")
-
-                # Coordenadas demanda (aceita variações de nome)
-                lat_dem = cnes.get(f"Lat_Demanda_{cen}")
-                lon_dem = cnes.get(f"Lon_Demanda_{cen}")
-                if pd.isna(lon_dem):
-                    lon_dem = cnes.get(f"Long_Demanda_{cen}")
-
-                # UBS como ponto pequeno (preto) no topo
+                    lon_ubs = row.get(f"Long_UBS_{cen}")
                 if pd.notna(lat_ubs) and pd.notna(lon_ubs):
                     folium.CircleMarker(
                         location=[lat_ubs, lon_ubs],
@@ -153,24 +342,51 @@ class posOTMFinal:
                         opacity=1.0,
                         weight=0,
                         pane="ubs_top",
-                        tooltip=cnes.get(f"UBS_Alocada_{cen}"),
+                        tooltip=row.get(f"UBS_Alocada_{cen}"),
                     ).add_to(ubs_layer)
 
-                # Ponto para centro do setor censitário (bem pequeno)
-                if pd.notna(lat_dem) and pd.notna(lon_dem):
-                    folium.CircleMarker(
-                        location=[lat_dem, lon_dem],
-                        radius=2,
-                        color="#1f77b4",
-                        fill=True,
-                        fill_color="#1f77b4",
-                        fill_opacity=0.9,
-                        opacity=0.9,
-                        weight=0,
-                        pane="demanda_mid",
-                    ).add_to(demanda_layer)
+        # Adiciona as camadas
+        demanda_layer.add_to(mapa_base)
+        if incluir_ubs:
+            ubs_layer.add_to(mapa_base)
 
-                # Linha ligando demanda → UBS
+        folium.LayerControl().add_to(mapa_base)
+        return mapa_base
+
+    def plota_mapa_cobertura_OTM(self, cen):
+        # Reaproveita o mapa base com setores e UBS
+        map = self.plota_mapa_base_setores(cen=cen, incluir_ubs=True)
+
+        # Precisamos novamente do GeoDataFrame filtrado para coroplético/linhas
+        cols_base = ["id_setor", "geometry"]
+        cols_plot = [i for i in self.df_merge.columns if cen in i or i in cols_base]
+        resultado = self.df_merge[cols_plot].copy()
+        if not isinstance(resultado, gpd.GeoDataFrame):
+            resultado = gpd.GeoDataFrame(
+                resultado,
+                geometry=(
+                    gpd.GeoSeries.from_wkt(resultado["geometry"])
+                    if resultado["geometry"].dtype == "O"
+                    else resultado["geometry"]
+                ),
+            )
+
+        # Pane e camada para ligações (demanda → UBS)
+        folium.map.CustomPane(name="links_mid", z_index=640).add_to(map)
+        ligacao_layer = folium.FeatureGroup(name="Ligação Demanda → UBS")
+
+        for index, cnes in resultado.iterrows():
+            try:
+                lat_ubs = cnes.get(f"Lat_UBS_{cen}")
+                lon_ubs = cnes.get(f"Lon_UBS_{cen}")
+                if pd.isna(lon_ubs):
+                    lon_ubs = cnes.get(f"Long_UBS_{cen}")
+
+                lat_dem = cnes.get(f"Lat_Demanda_{cen}")
+                lon_dem = cnes.get(f"Lon_Demanda_{cen}")
+                if pd.isna(lon_dem):
+                    lon_dem = cnes.get(f"Long_Demanda_{cen}")
+
                 if (
                     pd.notna(lat_dem)
                     and pd.notna(lon_dem)
@@ -179,7 +395,7 @@ class posOTMFinal:
                 ):
                     folium.PolyLine(
                         locations=[[lat_dem, lon_dem], [lat_ubs, lon_ubs]],
-                        color="#2c7fb8",  # azul mais visível
+                        color="#2c7fb8",
                         weight=1.6,
                         opacity=0.8,
                         dash_array="3,2",
@@ -251,11 +467,8 @@ class posOTMFinal:
             },
         ).add_to(map)
 
-        # Adiciona as camadas na ordem correta (links, demanda e por fim UBS)
+        # Adiciona a camada de ligações por cima dos pontos
         ligacao_layer.add_to(map)
-        demanda_layer.add_to(map)
-        # Adiciona a camada das UBS por último para garantir que fique por cima
-        ubs_layer.add_to(map)
 
         # Add the marker cluster to the map
 
@@ -266,81 +479,239 @@ class posOTMFinal:
         b = 0
 
     def plota_mapa_fluxo_equipes(self, cen):
-        df = self.dfs_otm_fluxo_equipes[cen]
-        df = df[(df.Total_Equipes > 0) | (df.Tipo_UBS == "Real")].reset_index()
-        # 1) Distribuição geral (hist + KDE)
-        plt.figure(figsize=(7, 4))
-        sns.histplot(df["Valor_Variavel_Fluxo"], bins=30, kde=True, color="#1f77b4")
-        plt.axvline(0, color="black", lw=1)
-        plt.title("Distribuição de Valor_Variavel_Fluxo")
-        plt.xlabel("Valor_Variavel_Fluxo")
-        plt.ylabel("Frequência")
-        plt.tight_layout()
-        plt.show()
+        df = self.dfs_otm_fluxo_equipes[cen].copy()
+        df_eq = df[df.tipo_equipe == 1].copy()
+        # Mantém apenas linhas com coordenadas válidas (Valor_Variavel pode ser nulo)
+        df = df[
+            df[
+                [
+                    "lat_origem",
+                    "long_origem",
+                    "lat_destino",
+                    "long_destino",
+                ]
+            ]
+            .notna()
+            .all(axis=1)
+        ].copy()
 
-        # 2) Comparação por tipo (box + pontos)
-        plt.figure(figsize=(7, 4))
-        sns.boxplot(data=df, x="Tipo_UBS", y="Valor_Variavel_Fluxo", whis=1.5)
-        sns.stripplot(
-            data=df, x="Tipo_UBS", y="Valor_Variavel_Fluxo", color="0.25", alpha=0.5
+        # Mapa base centralizado em Contagem
+        map_fluxos = folium.Map(
+            location=[self.lat_long_contagem[0], self.lat_long_contagem[1]],
+            tiles="cartodbpositron",
+            control_scale=True,
+            prefer_canvas=True,
+            zoom_start=11,
         )
-        plt.axhline(0, color="black", lw=1)
-        plt.title("Fluxo por Tipo de UBS")
-        plt.tight_layout()
-        plt.show()
 
-        # 3) Relação com equipes (scatter interativo)
-        fig = px.scatter(
-            df,
-            x="Total_Equipes",
-            y="Valor_Variavel_Fluxo",
-            color="Tipo_UBS",
-            size="Quantidade_Equipes_CNES",
-            hover_data=["UBS", "Quantidade_Equipes_CNES", "Total_Equipes"],
-            trendline="ols",
-            template="plotly_white",
-            title="Fluxo vs Total de Equipes (tamanho = Quantidade_Equipes_CNES)",
+        # Panes para controlar ordem de sobreposição
+        folium.map.CustomPane(name="origens_mid", z_index=635).add_to(map_fluxos)
+        folium.map.CustomPane(name="destinos_mid", z_index=636).add_to(map_fluxos)
+        folium.map.CustomPane(name="links_mid", z_index=637).add_to(map_fluxos)
+
+        # Trabalhar somente com tipo_equipe == 1 e agregar por origem
+        if "tipo_equipe" in df.columns:
+            df_eq = df[df.tipo_equipe == 1].copy()
+        else:
+            df_eq = df.copy()
+
+        if df_eq.empty:
+            folium.LayerControl(collapsed=False).add_to(map_fluxos)
+            return map_fluxos
+
+        agg_base = (
+            df_eq.groupby("Indice_UBS")
+            .agg(total_fluxo=("Valor_Variavel", "sum"))
+            .reset_index()
         )
-        fig.add_hline(y=0, line_color="black")
-        fig.show()
-
-        # 4) Top/bottom (barra divergente ordenada)
-        topn = 100
-        df2 = df[["UBS", "Valor_Variavel_Fluxo", "Tipo_UBS"]].copy()
-        df2 = df2.sort_values("Valor_Variavel_Fluxo")
-        df_plot = pd.concat([df2.head(topn // 2), df2.tail(topn // 2)])
-        fig = px.bar(
-            df_plot,
-            x="Valor_Variavel_Fluxo",
-            y=df_plot["UBS"].astype(str),
-            color="Valor_Variavel_Fluxo",
-            color_continuous_scale=["#d62728", "#eeeeee", "#2ca02c"],
-            template="plotly_white",
-            title=f"Top/Bottom {topn} Valor_Variavel_Fluxo",
+        coords = (
+            df_eq.groupby("Indice_UBS")
+            .agg(lat=("lat_origem", "first"), lon=("long_origem", "first"))
+            .reset_index()
         )
-        fig.update_layout(yaxis_title="UBS", xaxis_title="Valor_Variavel_Fluxo")
-        fig.add_vline(x=0, line_color="black")
-        fig.show()
+        agg_df = agg_base.merge(coords, on="Indice_UBS", how="left")
+        agg_df["total_fluxo"] = agg_df["total_fluxo"].fillna(0.0)
 
-    def plota_mapa_comparativo_cobertura(self):
-        b = 0
+        eqs_inicio = (
+            df_eq.groupby(by=["Indice_equipe"])
+            .agg({"Origem_Equipe": "first"})
+            .reset_index()
+        )
+        # Tudo isso aqui so para saber quantas equipes existiam em cada CNES antes da otimizacao!
+        df_un = self.dados_unidades[
+            self.dados_unidades.municipio_nome == "CONTAGEM"
+        ].reset_index(drop=True)
+        eqs_inicio["cnes"] = eqs_inicio.Origem_Equipe.apply(
+            lambda x: (
+                df_un.cnes.iloc[x - 1]
+                if x - 1 <= len(df_un.cnes)
+                else "Local_Candidato"
+            )
+        )
+        agg_df["cnes"] = agg_df.Indice_UBS.apply(
+            lambda x: (
+                df_un.cnes.iloc[x - 1]
+                if x - 1 <= len(df_un.cnes)
+                else "Local_Candidato"
+            )
+        )
 
-    def plota_mapa_comparativo_custos_otimizacao(self):
-        b = 0
+        # eqs_inicio["latitude"] = eqs_inicio.Origem_Equipe.apply(lambda x: df_un.latitude.iloc[x-1] if x-1 <= len(df_un.cnes) else "Local_Candidato")
+        # eqs_inicio["longitude"] = eqs_inicio.Origem_Equipe.apply(lambda x: df_un.longitude.iloc[x-1] if x-1 <= len(df_un.cnes) else "Local_Candidato")
+        df_qntd_equipes_inicio = (
+            eqs_inicio.groupby(by="cnes").agg({"Indice_equipe": "count"}).reset_index()
+        )
+        df_qntd_equipes_inicio = df_qntd_equipes_inicio.merge(
+            df_un, on="cnes", how="left"
+        )
+        df_qntd_equipes_inicio = df_qntd_equipes_inicio.rename(
+            columns={"Indice_equipe": "Quantidade_Inicial_Equipes"}
+        )
+        df_agg_end = agg_df.merge(df_qntd_equipes_inicio, on="cnes", how="left")
+        df_agg_end["Quantidade_Inicial_Equipes"] = (
+            df_agg_end.Quantidade_Inicial_Equipes.fillna(0)
+        )
+        # Das Equipes iniciais, quantas a unidade perdeu ?
+        camada_origens = folium.FeatureGroup(name="Resumo por origem (tipo 1)")
+        for _, r in df_agg_end.iterrows():
+            lat = r["lat"]
+            lon = r["lon"]
+            if pd.isna(lat) or pd.isna(lon):
+                continue
+            try:
+                lat = float(lat)
+                lon = float(lon)
+            except Exception:
+                continue
+            if not (np.isfinite(lat) and np.isfinite(lon)):
+                continue
+
+            tooltip = (
+                f"CNES : {r['cnes']}\n"
+                f"Nome : {r['nome_fantasia']}\n"
+                f"Quantidade Inicial Equipes : {r['Quantidade_Inicial_Equipes']}\n"
+                f"Quantidade Final: {r['total_fluxo']:.2f}\n"
+            )
+            folium.CircleMarker(
+                location=[lat, lon],
+                radius=4,
+                color="#2c7fb8",
+                fill=True,
+                fill_color="#2c7fb8",
+                fill_opacity=0.9,
+                opacity=0.9,
+                weight=0,
+                pane="origens_mid",
+                tooltip=tooltip,
+            ).add_to(camada_origens)
+
+        camada_origens.add_to(map_fluxos)
+
+        folium.LayerControl(collapsed=False).add_to(map_fluxos)
+        return map_fluxos  # map_fluxos.save("map_fluxo_eq_2.html")
+
+    def plota_mapa_fluxo_equipes_v2(self, cen):
+        df = self.dfs_otm_fluxo_equipes[cen].copy()
+        # TODO: Entender porque nem todas as 205 equipes estao aqui!
+        # Mantém apenas linhas com coordenadas válidas (Valor_Variavel pode ser nulo)
+        df = df[
+            df[
+                [
+                    "lat_origem",
+                    "long_origem",
+                    "lat_destino",
+                    "long_destino",
+                ]
+            ]
+            .notna()
+            .all(axis=1)
+        ].copy()
+
+        # Mapa base centralizado em Contagem
+        map = self.plota_mapa_base_setores(cen=cen, incluir_ubs=True, mostrar_ivs=True)
+
+        # Trabalhar somente com tipo_equipe == 1 e agregar por origem
+        if "tipo_equipe" in df.columns:
+            df_eq = df[df.tipo_equipe == 1].copy()
+        else:
+            df_eq = df.copy()
+
+        if df_eq.empty:
+            folium.LayerControl(collapsed=False).add_to(map)
+            # return map
+
+        # eqs_inicio["latitude"] = eqs_inicio.Origem_Equipe.apply(lambda x: df_un.latitude.iloc[x-1] if x-1 <= len(df_un.cnes) else "Local_Candidato")
+        # eqs_inicio["longitude"] = eqs_inicio.Origem_Equipe.apply(lambda x: df_un.longitude.iloc[x-1] if x-1 <= len(df_un.cnes) else "Local_Candidato")
+
+        resumo = self.resumo_cnes_fluxos(df_eq)
+        # pegar equipes criadas!
+        # df_merge = df_eq.merge(df_eq_criadas, right_on = "Unidade_UBS", left_on = "Indice_UBS", how="outer")
+
+        # Refazer essa parte!
+        # df_eq_criadas = self.df_abertura_equipes[cen]
+        # df_cr = df_eq_criadas[df_eq_criadas.eq_ESF_criadas > 0]
+        # df_merge = df_eq.merge(df_eq_criadas, right_on = "Unidade_UBS", left_on = "Indice_UBS", how="outer")
+
+        # Das Equipes iniciais, quantas a unidade perdeu ?
+        # Fluxos: usar o dataframe geral filtrado, não apenas tipo_equipe==1
+        df_fluxo = df[df.Valor_Variavel > 0].reset_index(drop=True)
+        print(f"Linhas de fluxo a desenhar: {len(df_fluxo)}")
+
+        # Pane e camada para fluxos (acima de UBS e demais)
+        folium.map.CustomPane(name="flows_top", z_index=700).add_to(map)
+        camada_fluxos = folium.FeatureGroup(name="Fluxo de equipes")
+
+        for _, r in df_fluxo.iterrows():
+            lat_o = r.get("lat_origem")
+            lon_o = r.get("long_origem")
+            lat_d = r.get("lat_destino")
+            lon_d = r.get("long_destino")
+            if pd.isna(lat_o) or pd.isna(lon_o) or pd.isna(lat_d) or pd.isna(lon_d):
+                continue
+            try:
+                lat_o = float(lat_o)
+                lon_o = float(lon_o)
+                lat_d = float(lat_d)
+                lon_d = float(lon_d)
+            except Exception:
+                continue
+            if not (
+                np.isfinite(lat_o)
+                and np.isfinite(lon_o)
+                and np.isfinite(lat_d)
+                and np.isfinite(lon_d)
+            ):
+                continue
+            print(f"fluxo equipe {r.cnes_eq} plotado")
+            folium.PolyLine(
+                locations=[[lat_o, lon_o], [lat_d, lon_d]],
+                color="#ff5722",
+                weight=3.5,
+                opacity=1.0,
+                pane="flows_top",
+                tooltip=f"Fluxo equipe {r.get('Indice_equipe', '')}",
+            ).add_to(camada_fluxos)
+
+        camada_fluxos.add_to(map)
+        folium.LayerControl().add_to(map)
+        map.save("map_fluxo_eq_FINAL_6.html")
+        return map
 
 
+# map = self.plota_mapa_base_setores(cen=cen, incluir_ubs=True)
 if __name__ == "__main__":
     path_baseline = r"C:\Users\marce\OneDrive\Área de Trabalho\MestradoHierarquico\resultados_alocacao_baseline.xlsx"
-    path_resultados_otimizacao_1 = r"C:\Users\marce\OneDrive\Área de Trabalho\MestradoHierarquico\Resultados_COBERTURA_MAXIMA_6.xlsx"
-    path_resultados_otimizacao_2 = r"C:\Users\marce\OneDrive\Área de Trabalho\MestradoHierarquico\Resultados_COBERTURA_MAXIMA_7.xlsx"
+    path_resultados_otimizacao_1 = r"C:\Users\marce\OneDrive\Área de Trabalho\MestradoHierarquico\Resultados_COBERTURA_MAXIMA_19_END.xlsx"
+    path_resultados_otimizacao_2 = r"C:\Users\marce\OneDrive\Área de Trabalho\MestradoHierarquico\Resultados_COBERTURA_MAXIMA_19_END.xlsx"
     dicts_paths = {
-        "Resultados_COBERTURA_MAXIMA_6": path_resultados_otimizacao_1,
-        "Resultados_COBERTURA_MAXIMA_7": path_resultados_otimizacao_2,
+        "Resultados_COBERTURA_MAXIMA_19": path_resultados_otimizacao_1,
+        "Resultados_COBERTURA_MAXIMA_20": path_resultados_otimizacao_2,
     }
 
     pos_otm = posOTMFinal(path_baseline, dicts_paths)
-    mapa_fluxo_equipes = pos_otm.plota_mapa_fluxo_equipes(
-        cen="Resultados_COBERTURA_MAXIMA_6"
+    mapa_fluxo_equipes = pos_otm.plota_mapa_fluxo_equipes_v2(
+        cen="Resultados_COBERTURA_MAXIMA_19"
     )
-    map_cen_6 = pos_otm.plota_mapa_cobertura_OTM(cen="Resultados_COBERTURA_MAXIMA_6")
+    mapa_fluxo_equipes.save("map_fluxo_eq.html")
+    map_cen_6 = pos_otm.plota_mapa_cobertura_OTM(cen="Resultados_COBERTURA_MAXIMA_9")
     map_cen_6.save("map_cen_10.html")

@@ -84,7 +84,9 @@ mutable struct MunicipalityData
     equipes_n3::DataFrame
     constantes::ModelConstants
     IVS::Vector{Float64}
-    equipes_primario_v2::DataFrame
+    equipes_ESF_primario_v2::DataFrame
+    equipes_ESB_primario_v2::DataFrame
+    equipes_ENASF_primario_v2::DataFrame
     
 end
 
@@ -103,6 +105,12 @@ mutable struct ModelIndices
     S_instalacoes_reais_n2::Vector{Int}
     S_instalacoes_reais_n3::Vector{Int}
     S_atribuicoes_reais_por_demanda::Vector{Int}
+    S_Equipes_ESF::Vector{Int}
+    S_Equipes_ESB::Vector{Int}
+    S_Equipes_ENASF::Vector{Int}
+    S_origem_equipes_ESB::Vector{Int}
+    S_origem_equipes_ESF::Vector{Int}
+    S_origem_equipes_ENASF::Vector{Int}
 end
 
 mutable struct ModelParameters
@@ -152,6 +160,18 @@ function filter_municipality_data(data::HealthcareData, municipio::String)::Muni
     S_cnes_primario_referencia_real = [row["UBS_ref"] for row in eachrow(df_m)]
     IVS = [row["IVS"] for row in eachrow(df_m)]
     df_eqps_v2 = data.df_equipes_primario_v2[data.df_equipes_primario_v2.NO_MUNICIPIO .== muncipio_upper, :]
+
+    ##TODO: ATENCAO: Rodar modelo primeiro com ESF e depois voltar para fazer a parte de equipe Bucal!
+    eqs_ESF = [70, 73, 76]
+    eq_ESB  = [71]
+    eq_NASF = [72]
+
+    # Filtra as equipes ESF ativas
+    equipes_ESF_filtradas = filter(row -> row.TP_EQUIPE in eqs_ESF && row.ST_ATIVA == 1 && row.ST_EQUIPE_VALIDA == "S", df_eqps_v2)
+    equipes_ESB_filtradas = filter(row -> row.TP_EQUIPE in eq_ESB && row.ST_ATIVA == 1  && row.ST_EQUIPE_VALIDA == "S", df_eqps_v2)
+    equipes_EMULTI_filtradas = filter(row -> row.TP_EQUIPE in eq_NASF && row.ST_ATIVA == 1  && row.ST_EQUIPE_VALIDA == "S", df_eqps_v2 )
+    # Faz o groupby por CO_CNES e conta a quantidade de CO_EQUIPE por CNES
+
 
     # Quando coletar valores de demanda
 
@@ -227,7 +247,9 @@ function filter_municipality_data(data::HealthcareData, municipio::String)::Muni
             porcentagem_populacao
         ),
         IVS, 
-        df_eqps_v2
+        equipes_ESF_filtradas, 
+        equipes_ESB_filtradas,
+        equipes_EMULTI_filtradas
     )
 end
 

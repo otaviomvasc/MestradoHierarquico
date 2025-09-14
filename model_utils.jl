@@ -32,12 +32,44 @@ function create_model_indices(mun_data::MunicipalityData)::ModelIndices
     unique_cbo_n3 = sort(unique(mun_data.equipes_n3.profissional_cbo))
     
     #S_equipes_n1 = collect(1:length(unique_cbo_n1))
-    S_equipes_n1 = [1] #Equipes de saude da familia!
+    S_equipes_n1 = [1, 2, 3] #Equipes de saude da familia,  Equipes Saude Bucal e ENASF !
     S_equipes_n2 = collect(1:length(unique_cbo_n2))
     S_equipes_n3 = collect(1:length(unique_cbo_n3))
 
-    mun_data.equipes_primario_v2
-    
+    mun_data.equipes_ESF_primario_v2
+    mun_data.equipes_ESB_primario_v2
+    S_Equipes_ESF = collect(1:length(mun_data.equipes_ESF_primario_v2.CO_EQUIPE))
+    S_Equipes_ESB = collect(1:length(mun_data.equipes_ESB_primario_v2.CO_EQUIPE))
+    S_Equipes_ENASF = collect(1:length(mun_data.equipes_ENASF_primario_v2.CO_EQUIPE))
+ #preciso garantir que a primeira linha desse df está realmente indicando o indice 1 do 
+
+    # Para cada linha do DataFrame mun_data.equipes_ESB_primario_v2, encontre o índice (linha) correspondente do CO_CNES em mun_data.unidades_n1.cnes
+    # Cria um dicionário: chave = número da linha em equipes_ESB_primario_v2, valor = índice do CNES em unidades_n1.cnes (ou -1 se não encontrado)
+    # Para cada linha do DataFrame, encontre o índice correspondente do CO_CNES em mun_data.unidades_n1.cnes
+    S_origem_equipes_ESB = [
+        begin
+            idx = findfirst(x -> x == row.CO_CNES, mun_data.unidades_n1.cnes)
+            idx === nothing ? -1 : idx
+        end
+        for row in eachrow(mun_data.equipes_ESB_primario_v2)
+    ]
+
+    S_origem_equipes_ESF = [
+        begin
+            idx = findfirst(x -> x == row.CO_CNES, mun_data.unidades_n1.cnes)
+            idx === nothing ? -1 : idx
+        end
+        for row in eachrow(mun_data.equipes_ESF_primario_v2)
+    ]
+
+    S_origem_equipes_ENASF = [
+        begin
+            idx = findfirst(x -> x == row.CO_CNES, mun_data.unidades_n1.cnes)
+            idx === nothing ? -1 : idx
+        end
+        for row in eachrow(mun_data.equipes_ENASF_primario_v2)
+    ]
+
     # Indices de pontos de demanda
     S_pontos_demanda = collect(1:qntd_pontos_demanda)
 
@@ -55,7 +87,13 @@ function create_model_indices(mun_data::MunicipalityData)::ModelIndices
         S_instalacoes_reais_n1,
         S_instalacoes_reais_n2,
         S_instalacoes_reais_n3, 
-        S_atribuicoes_reais_por_demanda
+        S_atribuicoes_reais_por_demanda,
+        S_Equipes_ESF,
+        S_Equipes_ESB,
+        S_Equipes_ENASF,
+        S_origem_equipes_ESB, 
+        S_origem_equipes_ESF,
+        S_origem_equipes_ENASF
     )
 end
 
@@ -235,43 +273,31 @@ function calculate_equipment_parameters(mun_data::MunicipalityData, data::Health
     }
     
     # Nível 1 (Primário)
+    #O que eu preciso saber?
+    #Qual Indice de UBS esta cada equipe 
+    # Para cada linha do DataFrame mun_data.equipes_ESB_primario_v2, encontre o índice (linha) correspondente do CO_CNES em mun_data.unidades_n1.cnes
 
-    eqs_ESF = [23, 70, 76, 72, 22, 1]
-    
-
-    # Filtra as equipes ESF ativas
-    equipes_ESF_filtradas = filter(row -> row.TP_EQUIPE in eqs_ESF && row.ST_ATIVA == 1, mun_data.equipes_primario_v2)
-
-    # Faz o groupby por CO_CNES e conta a quantidade de CO_EQUIPE por CNES
-    df_equipes_ESF = DataFrame(equipes_ESF_filtradas)
-    equipes_por_cnes = combine(groupby(df_equipes_ESF, :CO_CNES), nrow => :qtd_equipes)
-    
-    # Garantir ordem correspondente entre códigos e capacidades
-    # Opção 1: Usar vetores paralelos (mais simples)#Lista com codigo de cada equipe!
-    CNES_UBS = [row.CO_CNES for row in eachrow(equipes_por_cnes)]
-    Cap_Equipes_n1 = [row.qtd_equipes for row in eachrow(equipes_por_cnes)]
-    
     lista_equipes_n1 = Vector{String}(["MEDICO_FAMILIA"])
 
     capacidade_n1, custo_n1 = calculate_team_parameters(
         lista_equipes_n1, 
         data.df_necessidades_primario
     )
+    #Vetor de equipes!
+    
     #matriz_cap_n1 = calculate_equipment_capacity_matrix(
       #  mun_data.unidades_n1,
        # mun_data.equipes_n1,
        # lista_equipes_n1
     #)
     # Cria uma coluna "linha_unidades_n1" que indica a linha em mun_data.unidades_n1 onde o CO_CNES aparece na coluna cnes
-    equipes_por_cnes.linha_unidades_n1 = [
-        findfirst(x -> x == cnes, mun_data.unidades_n1.cnes) === nothing ? -1 : findfirst(x -> x == cnes, mun_data.unidades_n1.cnes)
-        for cnes in equipes_por_cnes.CO_CNES
-    ]
     # Ordena o DataFrame equipes_por_cnes pela coluna linha_unidades_n1
-    equipes_por_cnes_sorted = sort(equipes_por_cnes, :linha_unidades_n1)
+
 
     # Cria uma matriz (coluna única) com os valores ordenados da coluna qtd_equipes
-    matriz_cap_n1 = reshape(collect(equipes_por_cnes_sorted.qtd_equipes), :, 1)
+
+    #matriz_cap_n1 = reshape(collect(equipes_por_cnes_sorted.qtd_equipes), :, 1)
+    matriz_cap_n1 = reshape(collect(10), :, 1)
     #preciso descobrir qual posicao do vetor e cada CNES!
     
     
