@@ -1624,12 +1624,20 @@ function create_optimization_model_maximal_coverage_fluxo_equipes_ESF_e_ESB_Junt
 
     S_Equipes_ESF =  indices.S_Equipes_ESF
     S_Equipes_ESB =  indices.S_Equipes_ESB
+    pop_total = sum(S_Valor_Demanda)
+    S_Equipes_ENASF_candidatas = [19, 20, 21, 22, 23, 24, 25]
+    S_Equipes_ENASF = vcat([S_Equipes_ENASF_Reais, S_Equipes_ENASF_candidatas])
+    S_Equipes_ENASF_Reais = indices.S_Equipes_ENASF
+
     S_Equipes_ENASF = indices.S_Equipes_ENASF
-    
+
     S_origem_equipes_ESB = indices.S_origem_equipes_ESB
     S_origem_equipes_ESF = indices.S_origem_equipes_ESF
     S_origem_equipes_ENASF = indices.S_origem_equipes_ENASF #EQUIPE - NASF
     S_equipes = [1,2]
+
+    #Indices de equipes candidatas criados!
+    
 
     cap_equipes_n1 = 3000
 
@@ -1653,9 +1661,19 @@ function create_optimization_model_maximal_coverage_fluxo_equipes_ESF_e_ESB_Junt
     eqs_ESB_criadas_n1 = @variable(model, eq_ESB_criadas[n1 in S_n1] >= 0)
     
     # Variáveis para alocação de equipes ENASF e ESF para ENASF
-    eq_ENASF = @variable(model, eq_ENASF[n1 in S_n1, eq_esf in S_Equipes_ESF, eq_dest in S_Equipes_ENASF], Bin)
-    eq_ENASF_UBS = @variable(model, eq_ENASF_UBS[n1 in S_n1, eq_dest in S_Equipes_ENASF], Bin)
-    eq_ENASF_criadas = @variable(model, eq_ENASF_criadas[n1 in S_n1], Bin)
+    #eq_ENASF = @variable(model, eq_ENASF[n1 in S_n1, eq_esf in S_Equipes_ESF, eq_dest in S_Equipes_ENASF], Bin)
+    #eq_ENASF_UBS = @variable(model, eq_ENASF_UBS[n1 in S_n1, eq_dest in S_Equipes_ENASF], Bin)
+
+    
+    #ubs_COM_ENASF = @variable(model, ubs_com_ENASF[eq_dest in S_Equipes_ENASF, n1 in S_n1], Bin)
+    #criacao_ENASF = @variable(model, ubs_nova_ENASF[n1 in S_n1], Bin)
+    
+    ubs_com_enasf = @variable(model, ubs_com_ENASF[n1 in S_n1], Bin)
+    aloc_eqs_UBS = @variable(model, aloc_eqs_ESF_UBS_ENASF[n1 in S_n1, n1 in S_n1], Bin) #Onde as ESF de uma UBS (REAL OU CANDIDATA) vao ser alocadas!
+    
+    # Variáveis auxiliares para linearizar a restrição de limite de equipes por UBS
+    # Representa o número de equipes ESB alocadas de n1 para ubs_dest
+    eq_ESB_alocadas = @variable(model, eq_ESB_alocadas[n1 in S_n1, ubs_dest in S_n1] >= 0)
 
 
     var_pop_atendida = @variable(model, pop_atendida[d in S_Pontos_Demanda, eq in S_equipes, n1 in dominio_atr_n1[d]] >= 0) 
@@ -1678,42 +1696,42 @@ function create_optimization_model_maximal_coverage_fluxo_equipes_ESF_e_ESB_Junt
     @constraint(model, [n1 in S_instalacoes_reais_n1], Abr_n1[n1] == 1)
    
 
-    #Uma equipe so pode ser alocada em no maximo uma unidade! - Usa caso variaveis sejam continuas
+    #Regras:
 
-    #@constraint(model, [eq in S_Equipes_ESF], sum(eq_ESF_n1[eq, n1] for n1 in S_n1) <= 1)
-    #@constraint(model, [eq in S_Equipes_ESB], sum(eq_ESB_n1[eq, n1] for n1 in S_n1) <= 1)
+    #So posso ter enasf em unidades abertas!
+    @constraint(model, [n1 in S_n1],  ubs_com_enasf[ubs_dest] <= Abr_n1[n1])
 
-    # Restrições para alocação de equipes ENASF e ESF para ENASF
+    #So posso alocar uma UBS se tiver EMULTI no destino!
+    @constraint(model, [ubs_or in S_n1, ubs_dest in S_n1], aloc_eqs_ESF_UBS_ENASF[ubs_or, ubs_dest] <= ubs_com_enasf[ubs_dest])
+
+    #Cada UBS pode ter uma emulti - Variavel é binaria!
+    #Cada Emulti pode atender no maximo 9 equipes!
+    
+    # Restrições para linearizar: eq_ESB_alocadas[n1, ubs_dest] = (número_de_equipes_ESB[n1]) * aloc_eqs_ESF_UBS_ENASF[n1, ubs_dest]
+    # Usando Big-M: M = número máximo possível de equipes ESB em uma unidade
+    BIG_M = (length(S_Equipes_ESF) + 1)
+    # Calcular o número total de equipes ESF em cada unidade n1
+    @constraint(model, [n1 in S_n1, ubs_dest in S_n1], 
+        eq_ESB_alocadas[n1, ubs_dest] >= sum(eq_ESB_n1[eq, n1] for eq in S_Equipes_ESF) + eq_ESB_criadas[n1] 
+        - BIG_M * (1 - aloc_eqs_ESF_UBS_ENASF[n1, ubs_dest]))
+    
+    @constraint(model, [n1 in S_n1, ubs_dest in S_n1], 
+        eq_ESF_alocadas[n1, ubs_dest] <= sum(eq_ESF_n1[eq, n1] for eq in S_Equipes_ESF) + eq_ESF_criadas[n1])
+
+        
+    @constraint(model, [n1 in S_n1, ubs_dest in S_n1], 
+        eq_ESF_alocadas[n1, ubs_dest] <= BIG_M * aloc_eqs_ESF_UBS_ENASF[n1, ubs_dest])
+
+    # Restrição linearizada: total de equipes ESB alocadas para cada UBS destino <= 9
+    @constraint(model, [ubs_dest in S_n1], 
+        sum(eq_ESF_alocadas[n1, ubs_dest] for n1 in S_n1) <= 9 * ubs_com_enasf[ubs_dest])
+
     
 
 
-    # 2. Cada equipe ESF deve ser alocada a no maximo uma equipe ENASF ou numa equipe contratada!
-    @constraint(model, [eq_esf in S_Equipes_ESF], 
-        sum(eq_ENASF[n1, eq_esf, eq_dest] for n1 in S_n1, eq_dest in S_Equipes_ENASF) <= 1) #TODO: Inserir na FO a cobertura 
 
-
-    # 3. Cada equipe ENASF pode receber no máximo 9 equipe ESF
-    @constraint(model, [n1 in S_n1, eq_dest in S_Equipes_ENASF], 
-        sum(eq_ENASF[n1, eq_esf, eq_dest] for eq_esf in S_Equipes_ESF) <= 9) #Apos ter o pos-OTM, voltar a pensar como adicionar EMULTI criadas.
-    
-
-    #So posso alocar equipes se EMULTI estiver alocada na UBS!
-    @constraint(model, [n1 in S_n1, eq_dest in S_Equipes_ENASF], 
-        sum(eq_ENASF[n1, eq_esf, eq_dest] for eq_esf in S_Equipes_ESF) <= eq_ENASF_UBS[n1, eq_dest]) 
-
-
-    #Uma EMULTI so pode atender em uma UBS!
-    @constraint(model, [eq_dest in S_Equipes_ENASF], 
-            sum(eq_ENASF_UBS[n1, eq_dest] for n1 in S_n1) <= 1)
 
     
-    #Cada unidade pode ter no maximo 1 EMULTI -  Nova ou Criada!
-    @constraint(model, [n1 in S_n1], 
-        sum(eq_ENASF_UBS[eq, n1] for eq in S_Equipes_ENASF) +  eq_ENASF_criadas[n1] <= 1) #Só posso criar uma EMULTI por UNIDADE!
-
-        #Limite por UBS!
-    
-
     #Cada unidade pode ter no maximo 4 equipes ESF e 4 equipes ESB!
     @constraint(model, [n1 in S_n1], 
         (sum(eq_ESF_n1[eq, n1] for eq in S_Equipes_ESF) + eq_ESF_criadas[n1]) <= 4)
