@@ -5,6 +5,7 @@ struct Matriz_Dist
     Matriz_Dist_n1::Matrix{Float64}
     Matriz_Dist_n2::Matrix{Float64}
     Matriz_Dist_n3::Matrix{Float64}
+    Matriz_Dist_Emulti::Matrix{Float64}
 end
 
 mutable struct Domains

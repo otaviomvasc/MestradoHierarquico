@@ -1,6 +1,8 @@
-using JuMP, HiGHS, JLD2, XLSX, DataFrames, PrettyTables
+using JuMP, HiGHS, JLD2, XLSX, DataFrames, PrettyTables, Random
 using Base: deepcopy 
 
+
+Random.seed!(1234)
 include("healthcare_model.jl")
 include("model_utils.jl")
 include("model_builder.jl")
@@ -29,11 +31,11 @@ function example_usage()
     # Configurar parâmetros específicos do cenário
     println("Configurando parâmetros do cenário...")
     parameters.orcamento_maximo = 5000000.0
-    parameters.ponderador_Vulnerabilidade = 5
+    parameters.ponderador_Vulnerabilidade = 1
 
     println("Criando modelo de cobertura máxima")
-    #model = create_optimization_model_maximal_coverage(indices, parameters, mun_data)
-    model = create_optimization_model_maximal_coverage_fluxo_equipes_ESF_e_ESB_Juntas(indices, parameters, mun_data)
+    model = create_optimization_model_maximal_coverage_fluxo_equipes(indices, parameters, mun_data)
+    #model = create_optimization_model_maximal_coverage_fluxo_equipes_ESF_e_ESB_ENASF_simplificado(indices, parameters, mun_data)
     println("Otimizando modelo...")
     optimize!(model)
     

@@ -1431,27 +1431,31 @@ function create_optimization_model_maximal_coverage_fluxo_equipes(indices::Model
 
     S_Equipes_ESF =  indices.S_Equipes_ESF
     S_Equipes_ESB =  indices.S_Equipes_ESB
+    S_Equipes_ENASF = S_Equipes_ENASF_Reais = indices.S_Equipes_ENASF
     
     S_origem_equipes_ESB = indices.S_origem_equipes_ESB
     S_origem_equipes_ESF = indices.S_origem_equipes_ESF
+    S_origem_equipes_ENASF = indices.S_origem_equipes_ENASF
+    mt_emulti = parameters.S_Matriz_Dist.Matriz_Dist_Emulti
+    dominio_UBS_Emulti = Dict(ubs_orig => [ubs_dest for ubs_dest in S_n1 if mt_emulti[ubs_orig, ubs_dest] <= 5] for ubs_orig in S_n1)
 
 
     cap_equipes_n1 = 3000
 
     model = Model(HiGHS.Optimizer)
-    set_optimizer_attribute(model, "time_limit", 300.0)
-    set_optimizer_attribute(model, "primal_feasibility_tolerance", 1e-6) 
-    set_optimizer_attribute(model, "mip_rel_gap", 0.02) 
+
     #Variaveis
-    S_equipes = [1]
+    S_equipes = [1,2]
     #atribuicao primária
     aloc_n1 = @variable(model, Aloc_[d in S_Pontos_Demanda, n1 in dominio_atr_n1[d]], Bin)
     var_abr_n1 = @variable(model, Abr_n1[n1 in S_n1], Bin) #Abertura unidades primárias
     #Tipo_equipe (ESF OU ESB), Indice da equipe, destino!
     #TODO - v0 so com ESF!!
 
-    fluxo_eq_ESF_n1 = @variable(model, eq_n1[eq in S_Equipes_ESF, n1 in S_n1], Bin) #Possibilidade de dividir a equipe ?
-    eqs_criadas_n1 = @variable(model, eq_ESF_criadas[n1 in S_n1] >= 0)
+    fluxo_eq_ESF_n1 = @variable(model, eq_ESF_n1[eq in S_Equipes_ESF, n1 in S_n1], Bin) #Possibilidade de dividir a equipe ?
+    fluxo_eq_ESB_n1 = @variable(model, eq_ESB_n1[eq in S_Equipes_ESB, n1 in S_n1], Bin) 
+    eqs_ESF_criadas_n1 = @variable(model, eq_ESF_criadas[n1 in S_n1] >= 0)
+    eqs_ESB_criadas_n1 = @variable(model, eq_ESB_criadas[n1 in S_n1] >= 0)
     var_pop_atendida = @variable(model, pop_atendida[d in S_Pontos_Demanda, eq in S_equipes, n1 in dominio_atr_n1[d]] >= 0) #Inserir aqui as demografias das populacoes!
     
     #inicialmente vou somente encaminhar demanda para niveis superiore
@@ -1462,56 +1466,154 @@ function create_optimization_model_maximal_coverage_fluxo_equipes(indices::Model
     fluxo_n3 = @variable(model, X_n3[n2 in S_n2, n3 in dominio_atr_n3[n2]] >= 0)
     var_abr_n3 = @variable(model, Abr_n3[n3 in S_n3] == 1, Bin)
 
+    # ============================================================================================================
+    # RESTRICOES DE TERRITORIZALICAO DAS UBS!
+    # ============================================================================================================
     #Todas as unidades devem ser alocadas numa UBS de referencia
-    @constraint(model, [d in S_Pontos_Demanda], sum(Aloc_[d, n1] for n1 in dominio_atr_n1[d]) == 1)
-    @constraint(model, [d in S_Pontos_Demanda, eq in S_equipes, n1 in dominio_atr_n1[d]], var_pop_atendida[d, eq, n1] <= aloc_n1[d, n1] * maximum(S_Valor_Demanda))
-    @constraint(model, [d in S_Pontos_Demanda, eq in S_equipes], sum(var_pop_atendida[d, eq, n1] for n1 in dominio_atr_n1[d]) <= S_Valor_Demanda[d])
-    
-    
-
-    #Uma equipe so pode ser alocada em no maximo uma unidade!
-    @constraint(model, [eq in S_Equipes_ESF], sum(eq_n1[eq, n1] for n1 in S_n1) <= 1)
-
-    #Mudar indice para S_Equipes quando tiver 2 implementacoes - ESF e ESB
-    @constraint(model, [n1 in S_n1], sum(var_pop_atendida[d, eq, n1] for eq in S_equipes, d in S_Pontos_Demanda if n1 in dominio_atr_n1[d]) 
-            <= (sum(eq_n1[eq, n1] for eq in S_Equipes_ESF) + eqs_criadas_n1[n1]) * 3000)
-
-
-    #Abertura de unidades novas:
+    @constraint(model, [d in S_Pontos_Demanda], sum(Aloc_[d, n1] for n1 in dominio_atr_n1[d]) <= 1)
+    @constraint(model, [d in S_Pontos_Demanda, eq in S_equipes, n1 in dominio_atr_n1[d]], var_pop_atendida[d, eq, n1] <= aloc_n1[d, n1] *  S_Valor_Demanda[d])
+    #@constraint(model, [d in S_Pontos_Demanda, eq in S_equipes], sum(var_pop_atendida[d, eq, n1] for n1 in dominio_atr_n1[d]) <= S_Valor_Demanda[d])
+        #Abertura de unidades novas:
     @constraint(model, [d in S_Pontos_Demanda, s in dominio_candidatos_n1[d]], 
-                         Aloc_[d, s] <= var_abr_n1[s] )
+        Aloc_[d, s] <= var_abr_n1[s] )
+
+    @constraint(model, [n1 in S_instalacoes_reais_n1], Abr_n1[n1] == 1)
 
 
+
+
+    # ============================================================================================================
+    # TUDO DE ENASF!!!
+    # ============================================================================================================
+     
+    @variable(model, cobertura_ENASF[n1 in S_n1], Bin)
+    @variable(model, eq_ENASF_n1[eq in S_Equipes_ENASF, n1 in S_n1] >= 0)
+    @variable(model, eq_enasf_criadas[n1 in S_n1] >= 0)
+    @variable(model, pop_coberta_ENASF[d in S_Pontos_Demanda, n1 in dominio_atr_n1[d]] >= 0)
+
+    # UBS tem ENASF se recebe pelo menos uma equipe
+
+    @constraint(model, [n1 in S_n1],
+        cobertura_ENASF[n1] <= 
+        sum(sum(eq_ENASF_n1[eq, j] for eq in S_Equipes_ENASF) + eq_enasf_criadas[j] 
+            for j in dominio_UBS_Emulti[n1]))
+
+
+    #Uma ENASF por Unidade
+    @constraint(model, [n1 in S_n1],  sum(eq_ENASF_n1[eq, n1]  for eq in S_Equipes_ENASF)
+    + eq_enasf_criadas[n1] <= 1)
+    
+
+
+
+    #Somente unidades abertas podem ser cobertas e receber ENASF
+    @constraint(model, [n1 in S_n1], eq_enasf_criadas[n1] <= Abr_n1[n1])
+    @constraint(model, [eq in S_Equipes_ENASF, n1 in S_n1], eq_ENASF_n1[eq, n1] <= Abr_n1[n1])
+
+    @constraint(model, [eq in S_Equipes_ENASF], sum(eq_ENASF_n1[eq, n1] for n1 in S_n1) <= 1)
+    
+
+    M = maximum(S_Valor_Demanda)  # Big-M conservador
+
+    # Restrições de linearização para cada setor/equipe/UBS
+    @constraint(model, [d in S_Pontos_Demanda, n1 in dominio_atr_n1[d]],
+        pop_coberta_ENASF[d, n1] <= M * cobertura_ENASF[n1])
+
+    @constraint(model, [d in S_Pontos_Demanda, n1 in dominio_atr_n1[d]],
+        pop_coberta_ENASF[d, n1] <= pop_atendida[d, 1, n1])
+
+    @constraint(model, [d in S_Pontos_Demanda, n1 in dominio_atr_n1[d]],
+        pop_coberta_ENASF[d, n1] >= pop_atendida[d, 1, n1] - M * (1 - cobertura_ENASF[n1]))
+
+
+
+    #AMANHA = Restricao de capacidade das ENASFs
+
+    @constraint(model,
+    (sum(eq_ESF_n1[eq, n1] for eq in S_Equipes_ESF, n1 in S_n1) + sum(eq_ESF_criadas[n1] for n1 in S_n1)) <= 
+    9 * (sum(eq_ENASF_n1[eq, n1] for eq in S_Equipes_ENASF, n1 in S_n1) + sum(eq_enasf_criadas[n1] for n1 in S_n1)))
+    
+
+     # ============================================================================================================
+    # SUGESTAO GROK PARA INFEASIBILITY
+    # ============================================================================================================
+    #@constraint(model, territorialization[d in S_Pontos_Demanda], sum(Aloc_[d, n1] for n1 in dominio_atr_n1[d]) <= 1)
+    # ============================================================================================================
+    # ALOCACAO ESF E ESB
+    # ============================================================================================================
+    #Uma equipe so pode ser alocada em no maximo uma unidade!
+    @constraint(model, [eq in S_Equipes_ESF], sum(eq_ESF_n1[eq, n1] for n1 in S_n1) <= 1)
+    @constraint(model, [eq in S_Equipes_ESB], sum(eq_ESB_n1[eq, n1] for n1 in S_n1) <= 1)
+ 
+    @constraint(model, [n1 in S_n1], sum(var_pop_atendida[d, 1, n1] for d in S_Pontos_Demanda if n1 in dominio_atr_n1[d]) 
+            <= (sum(eq_ESF_n1[eq, n1] for eq in S_Equipes_ESF) + eq_ESF_criadas[n1]) * 3000)
+
+
+    @constraint(model, [n1 in S_n1], sum(var_pop_atendida[d, 2, n1] for d in S_Pontos_Demanda if n1 in dominio_atr_n1[d]) 
+            <= (sum(eq_ESB_n1[eq, n1] for eq in S_Equipes_ESB) + eq_ESB_criadas[n1]) * 3000)
+
+
+    @constraint(model, [n1 in S_n1], sum(eq_ESF_n1[eq, n1]  for eq in S_Equipes_ESF) + eq_ESF_criadas[n1] <= 4)
+
+
+    @constraint(model, [n1 in S_n1], 
+    sum(eq_ESB_n1[eq, n1] for eq in S_Equipes_ESB) + eq_ESB_criadas[n1]  
+        == sum(eq_ESF_n1[eq, n1] for eq in S_Equipes_ESF) + eq_ESF_criadas[n1])
+
+
+
+    #Equipes so podem ser alocadas em unidades abertas!
+    @constraint(model, [eq in S_Equipes_ESF, n1 in S_n1], eq_ESF_n1[eq, n1] <= Abr_n1[n1])
+    @constraint(model, [eq in S_Equipes_ESB, n1 in S_n1], eq_ESB_n1[eq, n1] <= Abr_n1[n1])
     #tambem preciso remover diminuir as equipes! - Posso assumir que se a equipe tiver custo negativo ela foi removida do sistema ?
 
-    #Abertura de UBS candidatos!
-    @expression(model, custo_contratacao_equipes_esf, sum(eq_ESF_criadas[n1] for n1 in S_n1) * 25000)
-    @expression(model, custo_realocaca_equipes, sum((Matriz_Dist_n1[S_origem_equipes_ESF[eq], n1] * eq_n1[eq, n1]) * 10  for eq in S_Equipes_ESF, n1 in S_n1 ))
-
-    #Posso ter equipes que nao sao alocadas em nenhum local e por isso nao custam para o sistema!
-    @expression(model, custo_mensal_equipes, sum(eq_n1[eq, n1] * 11000 for eq in S_Equipes_ESF, n1 in S_n1))
-
-
-    @expression(model, custo_fixo, sum(S_custo_fixo_n1 for un1 in S_instalacoes_reais_n1) + sum(Abr_n1[un] * S_custo_fixo_n1 for un in S_locais_candidatos_n1))
-    @expression(model, custo_variavel_n1, sum(pop_atendida[d, eq,  un] * S_custo_variavel_n1[1] for d in S_Pontos_Demanda, eq in S_equipes, un in S_n1 if un in dominio_atr_n1[d]))
+    
+    # ============================================================================================================
+    # Restricao de Orcamento
+    # ============================================================================================================
+    @expression(model, custo_contratacao_equipes_esf, sum(eq_ESF_criadas[n1] for n1 in S_n1) * 30000)
+    @expression(model, custo_realocaca_equipes_esf, sum((Matriz_Dist_n1[S_origem_equipes_ESF[eq], n1] * eq_ESF_n1[eq, n1]) * 1000 for eq in S_Equipes_ESF, n1 in S_n1 ))
+    @expression(model, custo_mensal_equipes_esf, (sum(eq_ESF_n1[eq, n1]  for eq in S_Equipes_ESF, n1 in S_n1) + sum(eq_ESF_criadas[n1] for n1 in S_n1))  * 32000)
     
     
+    @expression(model, custo_contratacao_equipes_esb, sum(eq_ESB_criadas[n1] for n1 in S_n1) * 30000)
+    @expression(model, custo_realocaca_equipes_esb, sum((Matriz_Dist_n1[S_origem_equipes_ESB[eq], n1] * eq_ESB_n1[eq, n1]) * 1000  for eq in S_Equipes_ESB, n1 in S_n1 ))
+    @expression(model, custo_mensal_equipes_esb, (sum(eq_ESB_n1[eq, n1]  for eq in S_Equipes_ESB, n1 in S_n1) + sum(eq_ESB_criadas[n1] for n1 in S_n1)) * 32000)
+
+
+    @expression(model, custo_contratacao_equipes_enasf, sum(eq_enasf_criadas[n1] for  n1 in S_n1) * 40000)
+    @expression(model, custo_realocaca_equipes_enasf, sum((Matriz_Dist_n1[S_origem_equipes_ENASF[eq], n1] * eq_ENASF_n1[eq, n1]) * 1000  for eq in S_Equipes_ENASF_Reais, n1 in S_n1 ))
+    @expression(model, custo_mensal_equipes_enasf, (sum(eq_ENASF_n1[eq, n1]  for eq in S_Equipes_ENASF, n1 in S_n1) + sum(eq_enasf_criadas[n1] for  n1 in S_n1)) * 90000)
+
+
+
+    @expression(model, custo_fixo, sum(Abr_n1[n1] * 1500 for n1 in S_n1))
+    @expression(model, custo_abertura, sum(Abr_n1[n1] * 10000 for n1 in S_locais_candidatos_n1))
     
-    @expression(model, custo_total_n1,
-    + custo_contratacao_equipes_esf 
-    + custo_realocaca_equipes
-    + custo_mensal_equipes 
+
+    @expression(model, custo_contratacao, custo_contratacao_equipes_esf + custo_contratacao_equipes_esb + custo_contratacao_equipes_enasf)
+    @expression(model, custo_realocaca_equipes, custo_realocaca_equipes_esf + custo_realocaca_equipes_esb + custo_mensal_equipes_enasf)
+    @expression(model, custo_mensal_equipes, custo_mensal_equipes_esf + custo_mensal_equipes_esb + custo_mensal_equipes_enasf)
+
+
+    @expression(model, custo_total, 
+    custo_contratacao
+    + custo_realocaca_equipes 
+    + custo_mensal_equipes
     + custo_fixo
-    + custo_variavel_n1)
+    + custo_abertura
+   )
 
+    @constraint(model, custo_total <= Orcamento_Maximo * 3)
 
-    @constraint(model, custo_total_n1 <= Orcamento_Maximo * 10)
-
+    # ============================================================================================================
+    # Multi-Fluxo
+    # ============================================================================================================
 
     #Fluxo de nivel Secundario!
     @constraint(model, [n1 in S_n1], 
-                sum(X_n2[n1, n2] for n2 in dominio_atr_n2[n1]) == percent_n1_n2 * sum(pop_atendida[d, eq, n1] 
-                        for  eq in S_equipes, d in S_Pontos_Demanda if n1 in dominio_atr_n1[d]))
+                sum(X_n2[n1, n2] for n2 in dominio_atr_n2[n1]) == percent_n1_n2 * sum(pop_atendida[d, 1, n1] 
+                        for d in S_Pontos_Demanda if n1 in dominio_atr_n1[d]))
 
 
     #Fluxo de nivel Terciario!
@@ -1522,35 +1624,511 @@ function create_optimization_model_maximal_coverage_fluxo_equipes(indices::Model
 
     #Funcao Objetivo:
     @objective(model, Max, sum(pop_atendida[d, eq, un] * S_IVS[d] for d in S_Pontos_Demanda, eq in S_equipes, un in S_n1 if un in dominio_atr_n1[d]) 
+    + sum(pop_coberta_ENASF[d, n1] * S_IVS[d] for d in S_Pontos_Demanda, n1 in dominio_atr_n1[d]))
     #+ sum(var_equidade[eq] * vls_eq[eq] for eq in S_equipes)
-    )
+
+    
+
+    # =============================================================================================================
+    # Tentativa warm START
+    # =============================================================================================================
+
+    #Random.seed!(1234)
+    #model = Model(HiGHS.Optimizer)
+    #set_optimizer_attribute(model, "random_seed", 1234)
+    set_optimizer_attribute(model, "primal_feasibility_tolerance", 1e-4)
+    set_optimizer_attribute(model, "dual_feasibility_tolerance", 1e-4)
+    set_optimizer_attribute(model, "time_limit", 900.0)
+    set_optimizer_attribute(model, "mip_rel_gap", 0.05)
+    # ... (your model definition)
 
     optimize!(model)
-    obj = objective_value(model)
-    println(obj)
-    println(value(custo_total_n1))
-    println(value(custo_realocaca_equipes)) #
-    println(value(custo_mensal_equipes))
+
+    # ============================================================================================================
+    # Solve
+    # ============================================================================================================
 
 
-    # Printar os valores da variável eq_n1
-    println("Valores da variável eq_n1:")
-    for eq in S_Equipes_ESF, n1 in S_n1
-        if value(eq_n1[eq, n1]) > 0
-            println("eq $(eq) - Origem: $(S_origem_equipes_ESF[eq])  - Destino: $(n1)] = ", value(eq_n1[eq, n1]))
+    
+
+    # ============================================================================================================
+    # Pos-OTM
+    # ============================================================================================================
+
+    if termination_status(model) == MOI.OPTIMAL
+        println("=== Solução Ótima Encontrada ===")
+        println("Valor do Objetivo: ", objective_value(model))
+        
+
+
+        #pop_atendida_ENSF = value.(model[:pop_coberta_ENASF])
+        total_eq = 0.0
+        for d in indices.S_Pontos_Demanda, n1 in indices.S_n1
+            if n1 in parameters.S_domains.dominio_n1[d]
+                total_eq += value(pop_coberta_ENASF[d,n1])
+            end
         end
+          println("Pop coberta por enasf: ", total_eq)
+        
+
+          pop_atendida = value.(model[:pop_atendida])
+          for eq in [1,2]
+              total_eq = 0.0
+             for d in indices.S_Pontos_Demanda, n1 in indices.S_n1
+                 if n1 in parameters.S_domains.dominio_n1[d]
+                     total_eq += value(pop_atendida[d, eq, n1])
+                 end
+             end
+            println("Equipe $(eq): ", total_eq)
+          end
+  
+
+        # 1. UBS Abertas (Abr_n1)
+        println("\n=== UBS Abertas ===")
+        for n1 in S_n1
+            if value(Abr_n1[n1]) > 0.5  # Binário, tolerância para 1
+                println("UBS $n1: Aberta")
+            else
+                println("UBS $n1: Fechada")
+            end
+        end
+    
+        # 2. Alocação de Pontos de Demanda
+        println("\n=== Alocação de Demanda para UBS ===")
+        for d in S_Pontos_Demanda
+            alocado = false
+            for n1 in dominio_atr_n1[d]
+                if value(Aloc_[d, n1]) > 0.5
+                    println("Ponto $d alocado para UBS $n1")
+                    alocado = true
+                end
+            end
+            if !alocado
+                println("Ponto $d NÃO alocado")
+            end
+        end
+        
+
+        enasf_alocadas = 0.0
+        for eq in S_Equipes_ENASF, n1 in S_n1
+            if value(eq_ENASF_n1[eq, n1]) > 0
+                println("Equipe $eq alocado na UBS $n1 com valor de $(value(eq_ENASF_n1[eq, n1]))")
+            end
+        end
+
+
+        
+        
+        for eq in S_Equipes_ESF, n1 in S_n1
+            if value(eq_ESF_n1[eq, n1]) > 0
+                println("Equipe $eq alocado na UBS $n1 com valor de $(value(eq_ESF_n1[eq, n1]))")
+            end
+        end
+
+
+        # Soma total da variável eq_ESF_criadas[n1] para todas as UBS
+        total_esf_criadas = sum(value(eq_ESF_criadas[n1]) for n1 in S_n1)
+        println("\nTotal de ESF criadas: ", total_esf_criadas)
+
+        total_esb_criadas = sum(value(eq_ESB_criadas[n1]) for n1 in S_n1)
+        println("\nTotal de ESB criadas: ", total_esb_criadas)
+
+        total_enasf_criadas = sum(value(eq_enasf_criadas[n1]) for n1 in S_n1)
+        println("\nTotal de enasf criadas: ", total_enasf_criadas)
+
+        # 3. Equipes Alocadas e Criadas
+        println("\n=== Equipes Alocadas e Criadas por UBS ===")
+        for n1 in S_n1
+            println("\nUBS $n1:")
+            # ESF
+            esf_alocadas = 0.0
+            for eq in S_Equipes_ESF
+                if value(eq_ESF_n1[eq, n1]) > 0
+                    esf_alocadas += value(eq_ESF_n1[eq, n1]) 
+                end
+            end
+            #esf_alocadas = sum(value(eq_ESF_n1[eq, n1]) for eq in S_Equipes_ESF if value(eq_ESF_n1[eq, n1]) > 0.5)
+            esf_criadas = round(value(eq_ESF_criadas[n1]), digits=2)
+            println("  ESF: $esf_alocadas alocadas, $esf_criadas criadas")
+            # ESB
+
+            esb_alocadas = 0.0
+            for eq in S_Equipes_ESB
+                if value(eq_ESB_n1[eq, n1]) > 0
+                    esb_alocadas += value(eq_ESB_n1[eq, n1]) 
+                end
+            end
+            #esb_alocadas = sum(value(eq_ESB_n1[eq, n1]) for eq in S_Equipes_ESB if value(eq_ESB_n1[eq, n1]) > 0.5)
+            esb_criadas = round(value(eq_ESB_criadas[n1]), digits=2)
+            println("  ESB: $esb_alocadas alocadas, $esb_criadas criadas")
+            # ENASF
+            #enasf_alocadas = sum(value(eq_ENASF_n1[eq, n1]) for eq in S_Equipes_ENASF if value(eq_ENASF_n1[eq, n1]) > 0.5)
+            enasf_alocadas = 0.0
+            for eq in S_Equipes_ENASF
+                if value(eq_ENASF_n1[eq, n1]) > 0
+                    enasf_alocadas += value(eq_ENASF_n1[eq, n1]) 
+                end
+            end
+
+            enasf_criadas = round(value(eq_enasf_criadas[n1]), digits=2)
+            println("  ENASF: $enasf_alocadas alocadas, $enasf_criadas criadas")
+        end
+    
+        # 4. População Atendida e Coberta por ENASF
+        println("\n=== População Atendida ===")
+        for d in S_Pontos_Demanda
+            for n1 in dominio_atr_n1[d]
+                for eq in S_equipes
+                    pop = 0
+                    if pop > 0
+                        println("Ponto $d, Equipe $eq, UBS $n1: $pop atendida")
+                    end
+                end
+                pop_enasf = round(value(pop_coberta_ENASF[d, n1]), digits=2)
+                if pop_enasf > 0
+                    println("Ponto $d, UBS $n1: $pop_enasf coberta por ENASF")
+                end
+            end
+        end
+
+
+        # 5. Fluxos para Níveis Secundário e Terciário
+        println("\n=== Fluxos para Nível Secundário (n2) ===")
+        for n1 in S_n1
+            for n2 in dominio_atr_n2[n1]
+                fluxo = round(value(X_n2[n1, n2]), digits=2)
+                if fluxo > 0
+                    println("De UBS $n1 para n2 $n2: $fluxo")
+                end
+            end
+        end
+        println("\n=== Fluxos para Nível Terciário (n3) ===")
+        for n2 in S_n2
+            for n3 in dominio_atr_n3[n2]
+                fluxo = round(value(X_n3[n2, n3]), digits=2)
+                if fluxo > 0
+                    println("De n2 $n2 para n3 $n3: $fluxo")
+                end
+            end
+        end
+
+        # 6. Custos
+        println("\n=== Custos ===")
+        println("Custo Total: ", round(value(custo_total), digits=2))
+        println("  Contratação: ", round(value(custo_contratacao), digits=2))
+        println("  Realocação: ", round(value(custo_realocaca_equipes), digits=2))
+        println("  Mensal Equipes: ", round(value(custo_mensal_equipes), digits=2))
+        println("  Fixo: ", round(value(custo_fixo), digits=2))
+        println("  Abertura: ", round(value(custo_abertura), digits=2))
+
+    else
+        println("Otimização não convergiu. Status: ", termination_status(model))
     end
-
-    for n1 in S_n1
-        println("unidade [$(n1)]", value(eq_ESF_criadas[n1]))
-    end
-
-
-
 
     return model
 
 end
+
+
+
+
+function generate_warm_start(model, S_Pontos_Demanda, S_n1, S_instalacoes_reais_n1, S_locais_candidatos_n1, 
+    S_Equipes_ESF, S_Equipes_ESB, S_Equipes_ENASF, dominio_atr_n1, S_Valor_Demanda, 
+    Matriz_Dist_n1, S_origem_equipes_ESF, S_origem_equipes_ESB, S_origem_equipes_ENASF, 
+    S_equipes, dominio_UBS_Emulti, Orcamento_Maximo, percent_n1_n2, percent_n2_n3, S_n2, 
+    S_n3, dominio_atr_n2, dominio_atr_n3, S_IVS)
+
+    Random.seed!(1234)  # Ensure reproducibility
+
+    # Initialize dictionaries for variable values
+    Aloc_val = Dict{Tuple{Any,Any},Float64}()
+    Abr_n1_val = Dict{Any,Float64}()
+    eq_ESF_n1_val = Dict{Tuple{Any,Any},Float64}()
+    eq_ESB_n1_val = Dict{Tuple{Any,Any},Float64}()
+    eq_ENASF_n1_val = Dict{Tuple{Any,Any},Float64}()
+    pop_atendida_val = Dict{Tuple{Any,Any,Any},Float64}()
+    pop_coberta_ENASF_val = Dict{Tuple{Any,Any},Float64}()
+    eq_ESF_criadas_val = Dict{Any,Float64}()
+    eq_ESB_criadas_val = Dict{Any,Float64}()
+    eq_enasf_criadas_val = Dict{Any,Float64}()
+    fluxo_n2_val = Dict{Tuple{Any,Any},Float64}()
+    fluxo_n3_val = Dict{Tuple{Any,Any},Float64}()
+    cobertura_ENASF_val = Dict{Any,Float64}()
+
+    # Step 1: Open only existing units to minimize costs
+    for n1 in S_n1
+    Abr_n1_val[n1] = n1 in S_instalacoes_reais_n1 ? 1.0 : 0.0
+    end
+
+    # Step 2: Assign demand points to the closest open unit
+    unassigned_demand = Set(S_Pontos_Demanda)
+    for d in S_Pontos_Demanda
+    min_dist = Inf
+    closest_n1 = nothing
+    for n1 in dominio_atr_n1[d]
+    if Abr_n1_val[n1] == 1.0 && Matriz_Dist_n1[d, n1] < min_dist
+    min_dist = Matriz_Dist_n1[d, n1]
+    closest_n1 = n1
+    end
+    end
+    if closest_n1 !== nothing
+    for n1 in dominio_atr_n1[d]
+    Aloc_val[(d, n1)] = (n1 == closest_n1) ? 1.0 : 0.0
+    end
+    delete!(unassigned_demand, d)
+    end
+    end
+
+    # Step 3: Open candidate units only if necessary and budget allows
+    max_budget = Orcamento_Maximo * 4
+    fixed_cost = sum(Abr_n1_val[n1] * 1500 for n1 in S_n1)
+    opening_cost = 0.0
+    remaining_budget = max_budget - fixed_cost
+
+    for d in unassigned_demand
+    min_dist = Inf
+    closest_n1 = nothing
+    for n1 in dominio_atr_n1[d]
+    if n1 in S_locais_candidatos_n1 && Matriz_Dist_n1[d, n1] < min_dist && remaining_budget >= 10000
+    min_dist = Matriz_Dist_n1[d, n1]
+    closest_n1 = n1
+    end
+    end
+    if closest_n1 !== nothing
+    Abr_n1_val[closest_n1] = 1.0
+    opening_cost += 10000
+    remaining_budget -= 10000
+    for n1 in dominio_atr_n1[d]
+    Aloc_val[(d, n1)] = (n1 == closest_n1) ? 1.0 : 0.0
+    end
+    delete!(unassigned_demand, d)
+    end
+    end
+
+    # Step 4: Allocate ESF and ESB teams
+    for n1 in S_n1
+    if Abr_n1_val[n1] == 1.0
+    eq_ESF_criadas_val[n1] = 0.0
+    eq_ESB_criadas_val[n1] = 0.0
+    # Calculate total demand assigned to this unit (50% of original demand)
+    total_demand = sum(0.5 * S_Valor_Demanda[d] * get(Aloc_val, (d, n1), 0.0) for d in S_Pontos_Demanda if n1 in dominio_atr_n1[d]; init=0.0)
+    # Estimate number of ESF teams needed (max 2 to stay within budget)
+    num_ESF_needed = ceil(Int, total_demand / 3000)
+    num_ESF_needed = min(num_ESF_needed, 2)  # Limit to 2 teams to reduce costs
+    # Check if assigning teams fits within budget
+    esf_cost_per_team = 32000 + sum(Matriz_Dist_n1[S_origem_equipes_ESF[eq], n1] * 100 for eq in S_Equipes_ESF; init=0.0) / max(1, length(S_Equipes_ESF))
+    if num_ESF_needed * esf_cost_per_team <= remaining_budget
+    available_teams_ESF = [eq for eq in S_Equipes_ESF if sum(get(eq_ESF_n1_val, (eq, j), 0.0) for j in S_n1; init=0.0) == 0]
+    num_ESF_teams = min(num_ESF_needed, length(available_teams_ESF))
+    for eq in S_Equipes_ESF
+    eq_ESF_n1_val[(eq, n1)] = 0.0
+    end
+    for i in 1:num_ESF_teams
+    eq_ESF_n1_val[(available_teams_ESF[i], n1)] = 1.0
+    remaining_budget -= esf_cost_per_team
+    end
+    # Assign ESB teams to match ESF teams
+    available_teams_ESB = [eq for eq in S_Equipes_ESB if sum(get(eq_ESB_n1_val, (eq, j), 0.0) for j in S_n1; init=0.0) == 0]
+    num_ESB_teams = min(num_ESF_teams, length(available_teams_ESB))
+    esb_cost_per_team = 32000 + sum(Matriz_Dist_n1[S_origem_equipes_ESB[eq], n1] * 100 for eq in S_Equipes_ESB; init=0.0) / max(1, length(S_Equipes_ESB))
+    for eq in S_Equipes_ESB
+    eq_ESB_n1_val[(eq, n1)] = 0.0
+    end
+    for i in 1:num_ESB_teams
+    if esb_cost_per_team <= remaining_budget
+    eq_ESB_n1_val[(available_teams_ESB[i], n1)] = 1.0
+    remaining_budget -= esb_cost_per_team
+    end
+    end
+    else
+    for eq in S_Equipes_ESF
+    eq_ESF_n1_val[(eq, n1)] = 0.0
+    end
+    for eq in S_Equipes_ESB
+    eq_ESB_n1_val[(eq, n1)] = 0.0
+    end
+    end
+    else
+    eq_ESF_criadas_val[n1] = 0.0
+    eq_ESB_criadas_val[n1] = 0.0
+    for eq in S_Equipes_ESF
+    eq_ESF_n1_val[(eq, n1)] = 0.0
+    end
+    for eq in S_Equipes_ESB
+    eq_ESB_n1_val[(eq, n1)] = 0.0
+    end
+    end
+    end
+
+    # Step 5: Assign population to teams (50% of demand)
+    for n1 in S_n1
+    if Abr_n1_val[n1] == 1.0
+    # Calculate total ESF and ESB capacity
+    esf_capacity = 3000 * sum(get(eq_ESF_n1_val, (eq, n1), 0.0) for eq in S_Equipes_ESF; init=0.0)
+    esb_capacity = 3000 * sum(get(eq_ESB_n1_val, (eq, n1), 0.0) for eq in S_Equipes_ESB; init=0.0)
+    # Distribute 50% of demand across assigned demand points
+    assigned_demand_points = [d for d in S_Pontos_Demanda if n1 in dominio_atr_n1[d] && get(Aloc_val, (d, n1), 0.0) == 1.0]
+    for d in assigned_demand_points
+    for eq in S_equipes
+    pop_atendida_val[(d, eq, n1)] = 0.0
+    if eq == 1 && esf_capacity > 0
+    pop_atendida_val[(d, eq, n1)] = min(0.5 * S_Valor_Demanda[d], esf_capacity)
+    esf_capacity -= pop_atendida_val[(d, eq, n1)]
+    elseif eq == 2 && esb_capacity > 0
+    pop_atendida_val[(d, eq, n1)] = min(0.5 * S_Valor_Demanda[d], esb_capacity)
+    esb_capacity -= pop_atendida_val[(d, eq, n1)]
+    end
+    end
+    end
+    else
+    for d in S_Pontos_Demanda
+    for eq in S_equipes
+    if n1 in dominio_atr_n1[d]
+    pop_atendida_val[(d, eq, n1)] = 0.0
+    end
+    end
+    end
+    end
+    end
+
+    # Step 6: Assign ENASF teams and coverage
+    for n1 in S_n1
+    if Abr_n1_val[n1] == 1.0 && sum(get(eq_ESF_n1_val, (eq, n1), 0.0) for eq in S_Equipes_ESF; init=0.0) >= 1
+    # Check if ENASF team fits within budget
+    enasf_cost = 40000 + 90000
+    if remaining_budget >= enasf_cost
+    cobertura_ENASF_val[n1] = 1.0
+    eq_enasf_criadas_val[n1] = 1.0
+    remaining_budget -= enasf_cost
+    for eq in S_Equipes_ENASF
+    eq_ENASF_n1_val[(eq, n1)] = 0.0
+    end
+    else
+    cobertura_ENASF_val[n1] = 0.0
+    eq_enasf_criadas_val[n1] = 0.0
+    for eq in S_Equipes_ENASF
+    eq_ENASF_n1_val[(eq, n1)] = 0.0
+    end
+    end
+    else
+    cobertura_ENASF_val[n1] = 0.0
+    eq_enasf_criadas_val[n1] = 0.0
+    for eq in S_Equipes_ENASF
+    eq_ENASF_n1_val[(eq, n1)] = 0.0
+    end
+    end
+    end
+
+    # Step 7: Set ENASF-covered population
+    for d in S_Pontos_Demanda
+    for n1 in dominio_atr_n1[d]
+    pop_coberta_ENASF_val[(d, n1)] = 0.0
+    if get(Aloc_val, (d, n1), 0.0) == 1.0 && cobertura_ENASF_val[n1] == 1.0
+    pop_coberta_ENASF_val[(d, n1)] = get(pop_atendida_val, (d, 1, n1), 0.0)
+    end
+    end
+    end
+
+    # Step 8: Set secondary and tertiary flows
+    for n1 in S_n1
+    for n2 in dominio_atr_n2[n1]
+    fluxo_n2_val[(n1, n2)] = percent_n1_n2 * sum(get(pop_atendida_val, (d, eq, n1), 0.0) for eq in S_equipes, d in S_Pontos_Demanda if n1 in dominio_atr_n1[d]; init=0.0)
+    end
+    end
+    for n2 in S_n2
+    for n3 in dominio_atr_n3[n2]
+    fluxo_n3_val[(n2, n3)] = percent_n2_n3 * sum(get(fluxo_n2_val, (n1, n2), 0.0) for n1 in S_n1 if n2 in dominio_atr_n2[n1]; init=0.0)
+    end
+    end
+
+    # Step 9: Apply warm start to the model
+    od = JuMP.object_dictionary(model)
+    if haskey(od, :Aloc_)
+        for (d, n1) in keys(od[:Aloc_])
+            set_start_value(od[:Aloc_][d, n1], get(Aloc_val, (d, n1), 0.0))
+        end
+    end
+    if haskey(od, :Abr_n1)
+        for n1 in keys(od[:Abr_n1])
+            set_start_value(od[:Abr_n1][n1], get(Abr_n1_val, n1, 0.0))
+        end
+    end
+    if haskey(od, :eq_ESF_n1)
+        for (eq, n1) in keys(od[:eq_ESF_n1])
+            set_start_value(od[:eq_ESF_n1][eq, n1], get(eq_ESF_n1_val, (eq, n1), 0.0))
+        end
+    end
+    if haskey(od, :eq_ESB_n1)
+        for (eq, n1) in keys(od[:eq_ESB_n1])
+            set_start_value(od[:eq_ESB_n1][eq, n1], get(eq_ESB_n1_val, (eq, n1), 0.0))
+        end
+    end
+    if haskey(od, :eq_ENASF_n1)
+        for (eq, n1) in keys(od[:eq_ENASF_n1])
+            set_start_value(od[:eq_ENASF_n1][eq, n1], get(eq_ENASF_n1_val, (eq, n1), 0.0))
+        end
+    end
+    if haskey(od, :pop_atendida)
+        for (d, eq, n1) in keys(od[:pop_atendida])
+            set_start_value(od[:pop_atendida][d, eq, n1], get(pop_atendida_val, (d, eq, n1), 0.0))
+        end
+    end
+    if haskey(od, :pop_coberta_ENASF)
+        for (d, n1) in keys(od[:pop_coberta_ENASF])
+            set_start_value(od[:pop_coberta_ENASF][d, n1], get(pop_coberta_ENASF_val, (d, n1), 0.0))
+        end
+    end
+    if haskey(od, :eq_ESF_criadas)
+        for n1 in keys(od[:eq_ESF_criadas])
+            set_start_value(od[:eq_ESF_criadas][n1], get(eq_ESF_criadas_val, n1, 0.0))
+        end
+    end
+    if haskey(od, :eq_ESB_criadas)
+        for n1 in keys(od[:eq_ESB_criadas])
+            set_start_value(od[:eq_ESB_criadas][n1], get(eq_ESB_criadas_val, n1, 0.0))
+        end
+    end
+    if haskey(od, :eq_enasf_criadas)
+        for n1 in keys(od[:eq_enasf_criadas])
+            set_start_value(od[:eq_enasf_criadas][n1], get(eq_enasf_criadas_val, n1, 0.0))
+        end
+    end
+    if haskey(od, :X_n2)
+        for (n1, n2) in keys(od[:X_n2])
+            set_start_value(od[:X_n2][n1, n2], get(fluxo_n2_val, (n1, n2), 0.0))
+        end
+    end
+    if haskey(od, :X_n3)
+        for (n2, n3) in keys(od[:X_n3])
+            set_start_value(od[:X_n3][n2, n3], get(fluxo_n3_val, (n2, n3), 0.0))
+        end
+    end
+    if haskey(od, :cobertura_ENASF)
+        for n1 in keys(od[:cobertura_ENASF])
+            set_start_value(od[:cobertura_ENASF][n1], get(cobertura_ENASF_val, n1, 0.0))
+        end
+    end
+
+    # Step 10: Calculate and print estimated costs
+    custo_total = sum(get(eq_ESF_criadas_val, n1, 0.0) * 30000 for n1 in S_n1) +
+    sum(Matriz_Dist_n1[S_origem_equipes_ESF[eq], n1] * get(eq_ESF_n1_val, (eq, n1), 0.0) * 100 for eq in S_Equipes_ESF, n1 in S_n1) +
+    sum(get(eq_ESF_n1_val, (eq, n1), 0.0) * 32000 for eq in S_Equipes_ESF, n1 in S_n1) +
+    sum(get(eq_ESB_criadas_val, n1, 0.0) * 30000 for n1 in S_n1) +
+    sum(Matriz_Dist_n1[S_origem_equipes_ESB[eq], n1] * get(eq_ESB_n1_val, (eq, n1), 0.0) * 100 for eq in S_Equipes_ESB, n1 in S_n1) +
+    sum(get(eq_ESB_n1_val, (eq, n1), 0.0) * 32000 for eq in S_Equipes_ESB, n1 in S_n1) +
+    sum(get(eq_enasf_criadas_val, n1, 0.0) * 40000 for n1 in S_n1) +
+    sum(Matriz_Dist_n1[S_origem_equipes_ENASF[eq], n1] * get(eq_ENASF_n1_val, (eq, n1), 0.0) * 100 for eq in S_Equipes_ENASF, n1 in S_n1) +
+    sum((get(eq_ENASF_n1_val, (eq, n1), 0.0) + get(eq_enasf_criadas_val, n1, 0.0)) * 90000 for eq in S_Equipes_ENASF, n1 in S_n1) +
+    fixed_cost + opening_cost
+    println("Estimated custo_total: ", custo_total, " vs Max: ", max_budget)
+    if custo_total > max_budget
+    println("WARNING: Budget exceeded in warm start. Consider reducing teams or units.")
+    end
+
+    return model
+end
+
+
 
 
 function create_optimization_model_maximal_coverage_fluxo_equipes_ESF_e_ESB_Juntas(indices::ModelIndices, parameters::ModelParameters, mun_data::MunicipalityData)::Model
@@ -1571,11 +2149,14 @@ function create_optimization_model_maximal_coverage_fluxo_equipes_ESF_e_ESB_Junt
     S_Valor_Demanda = mun_data.S_Valor_Demanda
     porcentagem_populacao = mun_data.constantes.porcentagem_populacao
     S_IVS = parameters.IVS
-
+    mt_emulti = parameters.S_Matriz_Dist.Matriz_Dist_Emulti
     dominio_atr_n1 = parameters.S_domains.dominio_n1
 
     #TODO: Retomar workarround de locais candidatos que atendam os pontos sem nenhum opcao no raio critico!
     dominio_candidatos_n1 = Dict(d => [s for s in dominio_atr_n1[d] if s in S_locais_candidatos_n1] for d in keys(dominio_atr_n1))
+    dominio_UBS_Emulti = Dict(ubs_orig => [ubs_dest for ubs_dest in S_n1 if mt_emulti[ubs_orig, ubs_dest] <= 5] for ubs_orig in S_n1)
+
+
 
     dominio_atr_n2 = parameters.S_domains.dominio_n2
     dominio_atr_n3 = parameters.S_domains.dominio_n3
@@ -1622,14 +2203,23 @@ function create_optimization_model_maximal_coverage_fluxo_equipes_ESF_e_ESB_Junt
     ponderador_Vulnerabilidade = parameters.ponderador_Vulnerabilidade
     S_IVS = ponderador_Vulnerabilidade .* parameters.IVS
 
-    S_Equipes_ESF =  indices.S_Equipes_ESF
-    S_Equipes_ESB =  indices.S_Equipes_ESB
-    pop_total = sum(S_Valor_Demanda)
-    S_Equipes_ENASF_candidatas = [19, 20, 21, 22, 23, 24, 25]
-    S_Equipes_ENASF = vcat([S_Equipes_ENASF_Reais, S_Equipes_ENASF_candidatas])
+    S_Equipes_ESF_Reais = indices.S_Equipes_ESF
+    S_Equipes_ESB_Reais = indices.S_Equipes_ESB
     S_Equipes_ENASF_Reais = indices.S_Equipes_ENASF
 
-    S_Equipes_ENASF = indices.S_Equipes_ENASF
+    pop_total = sum(S_Valor_Demanda)
+    eqps_nec_ESB = round((sum(S_Valor_Demanda)/3000) - length(S_Equipes_ESB_Reais)) + 1
+    eqps_nec_ESF = round((sum(S_Valor_Demanda)/3000) - length(S_Equipes_ESF_Reais)) + 1
+    eqps_ENAST = ((eqps_nec_ESF + length(S_Equipes_ESF_Reais) + 1) / 9)
+
+    S_Equipes_ESF_Candidatas = collect(length(S_Equipes_ESF_Reais) + 1: length(S_Equipes_ESF_Reais) + 1 + eqps_nec_ESF)
+    S_Equipes_ESB_Candidatas = collect(length(S_Equipes_ESB_Reais) + 1: length(S_Equipes_ESB_Reais) + 1 + eqps_nec_ESB)
+    S_Equipes_ENASF_Candidatas = collect(length(S_Equipes_ENASF_Reais) + 1: length(S_Equipes_ENASF_Reais) + 1 + eqps_ENAST)
+
+
+    S_Equipes_ENASF = vcat(S_Equipes_ENASF_Reais, S_Equipes_ENASF_Candidatas)
+    S_Equipes_ESF = vcat(S_Equipes_ESF_Reais, S_Equipes_ESF_Candidatas)
+    S_Equipes_ESB = vcat(S_Equipes_ESB_Reais, S_Equipes_ESB_Candidatas)
 
     S_origem_equipes_ESB = indices.S_origem_equipes_ESB
     S_origem_equipes_ESF = indices.S_origem_equipes_ESF
@@ -1642,9 +2232,11 @@ function create_optimization_model_maximal_coverage_fluxo_equipes_ESF_e_ESB_Junt
     cap_equipes_n1 = 3000
 
     model = Model(HiGHS.Optimizer)
-    set_optimizer_attribute(model, "time_limit", 2000.0)
-    set_optimizer_attribute(model, "primal_feasibility_tolerance", 1e-3) 
-    set_optimizer_attribute(model, "mip_rel_gap", 0.02) 
+    set_optimizer_attribute(model, "time_limit", 3600.0)  # Reduzido para 10 minutos
+    set_optimizer_attribute(model, "primal_feasibility_tolerance", 1e-6) 
+    set_optimizer_attribute(model, "mip_rel_gap", 0.05)  # Reduzido para 5%
+    set_optimizer_attribute(model, "threads", 4)  # Usar 4 threads
+    set_optimizer_attribute(model, "presolve", "off")  # Ativar presolve 
     #Variaveis
 
     #atribuicao primária
@@ -1653,32 +2245,15 @@ function create_optimization_model_maximal_coverage_fluxo_equipes_ESF_e_ESB_Junt
     #Tipo_equipe (ESF OU ESB), Indice da equipe, destino!
     #TODO - v0 so com ESF!!
 
-    fluxo_eq_ESF_n1 = @variable(model, eq_ESF_n1[eq in S_Equipes_ESF, n1 in S_n1], Bin)
-    eqs_criadas_n1 = @variable(model, eq_ESF_criadas[n1 in S_n1] >= 0)
-
-    
+    fluxo_eq_ESF_n1 = @variable(model, eq_ESF_n1[eq in S_Equipes_ESF, n1 in S_n1], Bin)   
     fluxo_eq_ESB_n1 = @variable(model, eq_ESB_n1[eq in S_Equipes_ESB, n1 in S_n1], Bin) 
-    eqs_ESB_criadas_n1 = @variable(model, eq_ESB_criadas[n1 in S_n1] >= 0)
+    fluxo_eq_ENASF_n1 = @variable(model, eq_ENASF_n1[eq in S_Equipes_ENASF, n1 in S_n1], Bin) #Alocacao de ENASF em UBS
+    #aloc_ESF_ENASF_n1 = @variable(model, aloc_ESF_ENASF[eq in S_Equipes_ENASF, eq1 in S_Equipes_ESF] >= 0 )  #Inicialmente continua!
     
-    # Variáveis para alocação de equipes ENASF e ESF para ENASF
-    #eq_ENASF = @variable(model, eq_ENASF[n1 in S_n1, eq_esf in S_Equipes_ESF, eq_dest in S_Equipes_ENASF], Bin)
-    #eq_ENASF_UBS = @variable(model, eq_ENASF_UBS[n1 in S_n1, eq_dest in S_Equipes_ENASF], Bin)
-
+    #aloc_ESF_ENASF_n1 = @variable(model, aloc_UBS_ENASF[ubs_origem in S_n1, ubs_com_enasf in dominio_ubs_ENASF[ubs_origem]], Bin) #Alocacao de UBS EM UBS
     
-    #ubs_COM_ENASF = @variable(model, ubs_com_ENASF[eq_dest in S_Equipes_ENASF, n1 in S_n1], Bin)
-    #criacao_ENASF = @variable(model, ubs_nova_ENASF[n1 in S_n1], Bin)
-    
-    ubs_com_enasf = @variable(model, ubs_com_ENASF[n1 in S_n1], Bin)
-    aloc_eqs_UBS = @variable(model, aloc_eqs_ESF_UBS_ENASF[n1 in S_n1, n1 in S_n1], Bin) #Onde as ESF de uma UBS (REAL OU CANDIDATA) vao ser alocadas!
-    
-    # Variáveis auxiliares para linearizar a restrição de limite de equipes por UBS
-    # Representa o número de equipes ESB alocadas de n1 para ubs_dest
-    eq_ESB_alocadas = @variable(model, eq_ESB_alocadas[n1 in S_n1, ubs_dest in S_n1] >= 0)
-
-
     var_pop_atendida = @variable(model, pop_atendida[d in S_Pontos_Demanda, eq in S_equipes, n1 in dominio_atr_n1[d]] >= 0) 
-    #var_pop_atendida_EMULTI = @variable(model, pop_atendida_EMULTI[n1 in S_n1, eq in S_Equipes_ENASF] >= 0)
-
+    
 
     #inicialmente vou somente encaminhar demanda para niveis superiore
     #Fluxo n2
@@ -1688,158 +2263,167 @@ function create_optimization_model_maximal_coverage_fluxo_equipes_ESF_e_ESB_Junt
     fluxo_n3 = @variable(model, X_n3[n2 in S_n2, n3 in dominio_atr_n3[n2]] >= 0)
     var_abr_n3 = @variable(model, Abr_n3[n3 in S_n3] == 1, Bin)
 
-    #Todas as unidades devem ser alocadas numa UBS de referencia
 
-    @constraint(model, [d in S_Pontos_Demanda], sum(Aloc_[d, n1] for n1 in dominio_atr_n1[d]) <= 1) #TODO: FLexibilizei a territorializacao para nao abrir unidades alem do orcamento!!
+
+     # ============================================================================================================
+    # VARIÁVEIS E RESTRIÇÕES PARA ALOCAÇÃO DE UBS NAS UBS MAIS PRÓXIMAS COM ENASF
+    # ============================================================================================================
+
+
+    @constraint(model, [d in S_Pontos_Demanda], sum(Aloc_[d, n1] for n1 in dominio_atr_n1[d]) <= 1)
     @constraint(model, [d in S_Pontos_Demanda, eq in S_equipes, n1 in dominio_atr_n1[d]], var_pop_atendida[d, eq, n1] <= aloc_n1[d, n1] * maximum(S_Valor_Demanda))
     @constraint(model, [d in S_Pontos_Demanda, eq in S_equipes], sum(var_pop_atendida[d, eq, n1] for n1 in dominio_atr_n1[d]) <= S_Valor_Demanda[d])
-    @constraint(model, [n1 in S_instalacoes_reais_n1], Abr_n1[n1] == 1)
-   
 
-    #Regras:
 
-    #So posso ter enasf em unidades abertas!
-    @constraint(model, [n1 in S_n1],  ubs_com_enasf[ubs_dest] <= Abr_n1[n1])
+    # ============================================================================================================
+    # VARIÁVEIS E RESTRIÇÕES PARA ALOCAÇÃO DE UBS NAS UBS MAIS PRÓXIMAS COM ENASF
+    # ============================================================================================================
 
-    #So posso alocar uma UBS se tiver EMULTI no destino!
-    @constraint(model, [ubs_or in S_n1, ubs_dest in S_n1], aloc_eqs_ESF_UBS_ENASF[ubs_or, ubs_dest] <= ubs_com_enasf[ubs_dest])
-
-    #Cada UBS pode ter uma emulti - Variavel é binaria!
-    #Cada Emulti pode atender no maximo 9 equipes!
+    aloc_UBS_proxima_ENASF = @variable(model, aloc_UBS_proxima_ENASF[i in S_n1, j in dominio_UBS_Emulti[i]], Bin)
     
-    # Restrições para linearizar: eq_ESB_alocadas[n1, ubs_dest] = (número_de_equipes_ESB[n1]) * aloc_eqs_ESF_UBS_ENASF[n1, ubs_dest]
-    # Usando Big-M: M = número máximo possível de equipes ESB em uma unidade
-    BIG_M = (length(S_Equipes_ESF) + 1)
-    # Calcular o número total de equipes ESF em cada unidade n1
-    @constraint(model, [n1 in S_n1, ubs_dest in S_n1], 
-        eq_ESB_alocadas[n1, ubs_dest] >= sum(eq_ESB_n1[eq, n1] for eq in S_Equipes_ESF) + eq_ESB_criadas[n1] 
-        - BIG_M * (1 - aloc_eqs_ESF_UBS_ENASF[n1, ubs_dest]))
     
-    @constraint(model, [n1 in S_n1, ubs_dest in S_n1], 
-        eq_ESF_alocadas[n1, ubs_dest] <= sum(eq_ESF_n1[eq, n1] for eq in S_Equipes_ESF) + eq_ESF_criadas[n1])
+    # Equação 1: Cada UBS deve ser alocada a exatamente uma UBS com ENASF
+    @constraint(model, [i in S_n1], sum(aloc_UBS_proxima_ENASF[i, j] for j in dominio_UBS_Emulti[i]) <= 1)
+    
+    # Equação 2: Só pode alocar a UBS j se ela tiver ENASF (y_j = 1)
+    # y_j é representado por: existe alguma equipe ENASF alocada na UBS j
+    @constraint(model, [i in S_n1, j in dominio_UBS_Emulti[i]], 
+                aloc_UBS_proxima_ENASF[i, j] <= sum(eq_ENASF_n1[eq, j] for eq in S_Equipes_ENASF))
 
-        
-    @constraint(model, [n1 in S_n1, ubs_dest in S_n1], 
-        eq_ESF_alocadas[n1, ubs_dest] <= BIG_M * aloc_eqs_ESF_UBS_ENASF[n1, ubs_dest])
 
-    # Restrição linearizada: total de equipes ESB alocadas para cada UBS destino <= 9
-    @constraint(model, [ubs_dest in S_n1], 
-        sum(eq_ESF_alocadas[n1, ubs_dest] for n1 in S_n1) <= 9 * ubs_com_enasf[ubs_dest])
+    #Toda UBS com ESF tem que estar alocada numa com emulti!
+    #@constraint(model, [i in S_n1], sum(eq_ESF_n1[eq, i] for eq in S_Equipes_ESF) <= 
+    #sum(aloc_UBS_proxima_ENASF[i, j] for j in dominio_UBS_Emulti[i]) * 200) 
 
+
+    #Cada equipe ENASF so pode ser alocada em uma UBS!
+    @constraint(model, [eq in S_Equipes_ENASF], sum(eq_ENASF_n1[eq, j] for j in S_n1) <= 1)
+    @constraint(model, [i in S_n1, j in dominio_UBS_Emulti[i]], aloc_UBS_proxima_ENASF[i, j] <= Abr_n1[i])
+    @constraint(model, [i in S_n1, j in dominio_UBS_Emulti[i]], aloc_UBS_proxima_ENASF[i, j] <= Abr_n1[j])
     
 
+    # Garantir que uma UBS não se aloque a si mesma se não tiver ENASF
+    @constraint(model, [i in S_n1], 
+                aloc_UBS_proxima_ENASF[i, i] <= sum(eq_ENASF_n1[eq, i] for eq in S_Equipes_ENASF))
+    
+    #Quantidade de eq_enasf proporcional a ESF
+    #@constraint(model, sum(eq_ESF_n1[eq, n1] for eq in S_Equipes_ESF, n1 in S_n1) <=  
+                #sum(eq_ENASF_n1[eq, i] for eq in S_Equipes_ENASF, i in S_n1) * 9)
 
+    #So posso alocar no maximo 4 ubs por ENASF para tentar distribuir os resultados!
+    @constraint(model, [j in S_n1], sum(aloc_UBS_proxima_ENASF[i, j] for i in S_n1 if j in dominio_UBS_Emulti[i]) <= 4)
 
 
     
+    
+    # ------------------------------------------------------------------------------------------------------------------------------------
+    # Ultima Tentativa da Tirar linearidade!!
+    # -----------------------------------------------------------------------------------------------------------------------------------
+    @variable(model, var_pop_ponderada_ENASF[n1 in S_n1] >= 0 )
+    
+    pop_atendida_por_UBS = @expression(model, [n1 in S_n1], 
+    sum(pop_atendida[d, 1, n1] * S_IVS[d] for d in S_Pontos_Demanda if n1 in dominio_atr_n1[d]))
+    
+    aux_pop_aloc_ENASF = @variable(model, aux_pop_aloc_ENASF[n1 in S_n1, j in dominio_UBS_Emulti[n1]] >= 0)
+
+    # Big-M mais preciso baseado na capacidade real
+    max_ivs = maximum(S_IVS[d] for d in S_Pontos_Demanda)
+    M = 4 * 3000 * max_ivs  # 4 equipes ESF × 3000 pessoas × maior IVS
+    
+    # RESTRIÇÕES DE LINEARIZAÇÃO CORRIGIDAS
+    @constraint(model, [n1 in S_n1, j in dominio_UBS_Emulti[n1]], 
+        aux_pop_aloc_ENASF[n1, j] <= M * aloc_UBS_proxima_ENASF[n1, j])  # CORRIGIDO: Big-M preciso
+    
+    @constraint(model, [n1 in S_n1, j in dominio_UBS_Emulti[n1]], 
+        aux_pop_aloc_ENASF[n1, j] <= pop_atendida_por_UBS[n1])  # MANTÉM
+    
+    @constraint(model, [n1 in S_n1, j in dominio_UBS_Emulti[n1]], 
+        aux_pop_aloc_ENASF[n1, j] >= pop_atendida_por_UBS[n1] - M * (1 - aloc_UBS_proxima_ENASF[n1, j]))  # CORRIGIDO: Big-M preciso
+    
+    # Restrição original linearizada (mantém igual)
+    @constraint(model, [j in S_n1], 
+        var_pop_ponderada_ENASF[j] == sum(aux_pop_aloc_ENASF[n1, j] for n1 in S_n1 if j in dominio_UBS_Emulti[n1]))
+
+    # ------------------------------------------------------------------------------------------------------------------------------------
+    # Capacidades das UBS!
+    # -----------------------------------------------------------------------------------------------------------------------------------
+
     #Cada unidade pode ter no maximo 4 equipes ESF e 4 equipes ESB!
-    @constraint(model, [n1 in S_n1], 
-        (sum(eq_ESF_n1[eq, n1] for eq in S_Equipes_ESF) + eq_ESF_criadas[n1]) <= 4)
+    @constraint(model, [n1 in S_n1], sum(eq_ESF_n1[eq, n1] for eq in S_Equipes_ESF) <= 4)
 
-
-    "
-    @constraint(model, [eq_enasf in S_Equipes_ENASF], 
-    
-                    var_pop_atendida_EMULTI[eq_enasf] 
-                    == sum(eq_ENASF[n1, eq_esf, eq_enasf] for n1 in S_n1, eq_esf in S_Equipes_ESF) * 3000 #Populacao coberta por cada ESF e assumi essa EMULT
-                     )
-
-
-    Entendo a ideia de melhor localizar as EMULTI nas unidades que minimizem a distancia total entre todas as UBS, porque
-    sao uma especie de atencao secundaria na atencao primaria. Porém a logica de implementar a mais proxima nao vai funcionar no contexto
-    do meu modelo.
-
-    Porque: 
-    1 - O problema consiste em instalar as Emulti nas localizacoes que minimizem a distancia total percorrida, e nao a unidade mais proxima
-    2 - Eu tenho acapacidade que pode tornar o problema inviavel.
-
-    Neste contexto vou optar por alocar as ESFs nas EMULTIs de forma a maxizar a populacao atendida por vulnerabilidade.
-    Se necessario posso fazer um outro modelo só de P-medianas classico para alocar as Emulti e usa-lo como parametro aqui, mas nao estou
-    conseguindo fazer essa alocacao dentro do meu modelo.
-
-
-    Num primeiro momento nao vou forcar a ideia de localizar a Emulti por distancia
-    for eq_esf in S_Equipes_ESF
-        origem_esf = S_origem_equipes_ESF[eq_esf]
-        
-        # Calcular distâncias para todas as equipes ENASF
-        distancias = Float64[]
-        for eq_dest in S_Equipes_ENASF
-            origem_enasp = S_origem_equipes_ENASF[eq_dest]
-            # Usar a matriz de distância entre unidades n1 (onde estão as origens das equipes)
-            distancia = Matriz_Dist_n1[origem_esf, origem_enasp]
-            push!(distancias, distancia)
-        end
-        
-        # Encontrar a distância mínima
-        distancia_minima = minimum(distancias)
-        
-        # Para cada equipe ENASF, se não for a mais próxima, não pode ser selecionada
-        for (idx_dest, eq_dest) in enumerate(S_Equipes_ENASF)
-            if distancias[idx_dest] > distancia_minima + 1e-6  # tolerância numérica
-                @constraint(model, eq_ESF_to_ENASF[eq_esf, eq_dest] <= 1 - Abr_n1[n1]) #Nao esta redundante com a restrica n1 ?
-            end
-        end
-    end
-
-    "
-
+    #Cada unidade pode ter no maximo 1 Emulti!
+    @constraint(model, [n1 in S_n1], sum(eq_ENASF_n1[eq, n1] for eq in S_Equipes_ENASF) <= 1)
 
     #Limite por equipes!
     @constraint(model, [n1 in S_n1], sum(var_pop_atendida[d, 1, n1] for d in S_Pontos_Demanda if n1 in dominio_atr_n1[d]) 
-            <= (sum(eq_ESF_n1[eq, n1] for eq in S_Equipes_ESF) + eq_ESF_criadas[n1]) * 3000)
+            <= sum(eq_ESF_n1[eq, n1] for eq in S_Equipes_ESF) * 3000)
 
 
     @constraint(model, [n1 in S_n1], sum(var_pop_atendida[d, 2, n1] for d in S_Pontos_Demanda if n1 in dominio_atr_n1[d]) 
-            <= (sum(eq_ESB_n1[eq, n1] for eq in S_Equipes_ESB) + eq_ESB_criadas[n1]) * 3000)
+            <= sum(eq_ESB_n1[eq, n1] for eq in S_Equipes_ESB) * 3000)
 
 
+    # ------------------------------------------------------------------------------------------------------------------------------------
+    # Alocacoes ESF - ESB
+    # -----------------------------------------------------------------------------------------------------------------------------------
 
-
-    #TODO: Duvida importante: Pode ser que reduza recursos da ESF para aumentar a quantidade de ESB
     @constraint(model, [n1 in S_n1], 
-        sum(eq_ESB_n1[eq, n1] for eq in S_Equipes_ESB) + eq_ESB_criadas[n1] == sum(eq_ESF_n1[eq, n1] for eq in S_Equipes_ESF) + eq_ESF_criadas[n1])
+        sum(eq_ESB_n1[eq, n1] for eq in S_Equipes_ESB)  == sum(eq_ESF_n1[eq, n1] for eq in S_Equipes_ESF))
+
+    #ESF e ESB Podema atender somente em uma UBS!
+    @constraint(model, [eq in S_Equipes_ESF], sum(eq_ESF_n1[eq, n1] for n1 in S_n1) <= 1)
+    @constraint(model, [eq in S_Equipes_ESB], sum(eq_ESB_n1[eq, n1] for n1 in S_n1) <= 1)
 
 
-    #Abertura de unidades novas:
-    @constraint(model, [d in S_Pontos_Demanda, s in dominio_candidatos_n1[d]], 
-                         Aloc_[d, s] <= var_abr_n1[s] )
+    
+    # ------------------------------------------------------------------------------------------------------------------------------------
+    # Abertura de unidades novas:
+    # -----------------------------------------------------------------------------------------------------------------------------------
+
+    @constraint(model, [d in S_Pontos_Demanda, s in dominio_candidatos_n1[d]], Aloc_[d, s] <= var_abr_n1[s] )
+    @constraint(model, [n1 in S_instalacoes_reais_n1], Abr_n1[n1] == 1)
+
+    # ------------------------------------------------------------------------------------------------------------------------------------
+    # Restricoes de Custos
+    # -----------------------------------------------------------------------------------------------------------------------------------
+    @expression(model, custo_contratacao_equipes_esf, sum(eq_ESF_n1[eq, n1] for eq in S_Equipes_ESF_Candidatas, n1 in S_n1) * 30000)
+    @expression(model, custo_realocaca_equipes_esf, sum((Matriz_Dist_n1[S_origem_equipes_ESF[eq], n1] * eq_ESF_n1[eq, n1]) * 100 for eq in S_Equipes_ESF_Reais, n1 in S_n1 ))
+    @expression(model, custo_mensal_equipes_esf, sum(eq_ESF_n1[eq, n1]  for eq in S_Equipes_ESF, n1 in S_n1) * 32000)
 
 
-    #tambem preciso remover diminuir as equipes! - Posso assumir que se a equipe tiver custo negativo ela foi removida do sistema ?
-
-    #Abertura de UBS candidatos!
-    @expression(model, custo_contratacao_equipes_esf, sum(eq_ESF_criadas[n1] for n1 in S_n1) * 30000)
-    @expression(model, custo_realocaca_equipes_esf, sum((Matriz_Dist_n1[S_origem_equipes_ESF[eq], n1] * eq_ESF_n1[eq, n1]) * 100 for eq in S_Equipes_ESF, n1 in S_n1 ))
-    @expression(model, custo_mensal_equipes_esf, sum(eq_ESF_n1[eq, n1] * 32000 for eq in S_Equipes_ESF, n1 in S_n1) + sum(eq_ESF_criadas[n1] for n1 in S_n1) * 32000)
+    @expression(model, custo_contratacao_equipes_esb, sum(eq_ESB_n1[eq, n1] for eq in S_Equipes_ESB_Candidatas, n1 in S_n1) * 30000)
+    @expression(model, custo_realocaca_equipes_esb, sum((Matriz_Dist_n1[S_origem_equipes_ESB[eq], n1] * eq_ESB_n1[eq, n1]) * 100  for eq in S_Equipes_ESB_Reais, n1 in S_n1 ))
+    @expression(model, custo_mensal_equipes_esb, sum(eq_ESB_n1[eq, n1]  for eq in S_Equipes_ESB, n1 in S_n1) * 32000)
 
 
-    @expression(model, custo_contratacao_equipes_esb, sum(eq_ESB_criadas[n1] for n1 in S_n1) * 30000)
-    @expression(model, custo_realocaca_equipes_esb, sum((Matriz_Dist_n1[S_origem_equipes_ESB[eq], n1] * eq_ESB_n1[eq, n1]) * 100  for eq in S_Equipes_ESB, n1 in S_n1 ))
-    @expression(model, custo_mensal_equipes_esb, sum(eq_ESB_n1[eq, n1] * 32000 for eq in S_Equipes_ESB, n1 in S_n1) + sum(eq_ESB_criadas[n1] for n1 in S_n1) * 32000)
+    @expression(model, custo_contratacao_equipes_enasf, sum(eq_ENASF_n1[eq, n1] for eq in S_Equipes_ENASF_Candidatas, n1 in S_n1) * 40000)
+    @expression(model, custo_realocaca_equipes_enasf, sum((Matriz_Dist_n1[S_origem_equipes_ENASF[eq], n1] * eq_ENASF_n1[eq, n1]) * 100  for eq in S_Equipes_ENASF_Reais, n1 in S_n1 ))
+    @expression(model, custo_mensal_equipes_enasf, sum(eq_ENASF_n1[eq, n1]  for eq in S_Equipes_ENASF, n1 in S_n1) * 90000)
 
 
-    #@expression(model, custo_fixo, sum(S_custo_fixo_n1 for un1 in S_instalacoes_reais_n1) + sum(Abr_n1[un] * S_custo_fixo_n1 for un in S_locais_candidatos_n1))
-    #@expression(model, custo_variavel_n1, sum(pop_atendida[d, eq,  un] * S_custo_variavel_n1[1] for d in S_Pontos_Demanda, eq in S_equipes, un in S_n1 if un in dominio_atr_n1[d]))
+    @expression(model, custo_fixo, sum(Abr_n1[n1] * 1500 for n1 in S_n1))
+    @expression(model, custo_abertura, sum(Abr_n1[n1] * 10000 for n1 in S_locais_candidatos_n1))
+
+    
+    @expression(model, custo_contratacao, custo_contratacao_equipes_esf + custo_contratacao_equipes_esb + custo_contratacao_equipes_enasf)
+    @expression(model, custo_realocaca_equipes, custo_realocaca_equipes_esf + custo_realocaca_equipes_esb + custo_mensal_equipes_enasf)
+    @expression(model, custo_mensal_equipes, custo_mensal_equipes_esf + custo_mensal_equipes_esb + custo_mensal_equipes_enasf )
+
     
     
-    
-    @expression(model, custo_total_n1,
-    + custo_contratacao_equipes_esf 
-    + custo_realocaca_equipes_esf
-    + custo_mensal_equipes_esf
-    + custo_contratacao_equipes_esb
-    + custo_realocaca_equipes_esb
-    + custo_mensal_equipes_esb
-    #+ custo_fixo - aluguel
-   # + custo_variavel_n1 - insumos e consumos
-    # + Custo de abertura - para nao abrir indiscriminadamente UBS - Amortizacao do imovel em 20 anos!
-    
+    @expression(model, custo_total, 
+    custo_contratacao
+    + custo_realocaca_equipes 
+    + custo_mensal_equipes
+    + custo_fixo
+    + custo_abertura
    )
 
-    @constraint(model, custo_total_n1 <= Orcamento_Maximo * 2)
+    @constraint(model, custo_total <= Orcamento_Maximo * 2)
 
-
+    # ------------------------------------------------------------------------------------------------------------------------------------
+    # Restricoes de Fluxo Hierarquico
+    # -----------------------------------------------------------------------------------------------------------------------------------
     #Fluxo de nivel Secundario!
     @constraint(model, [n1 in S_n1], 
                 sum(X_n2[n1, n2] for n2 in dominio_atr_n2[n1]) == percent_n1_n2 * sum(pop_atendida[d, eq, n1] 
@@ -1852,15 +2436,19 @@ function create_optimization_model_maximal_coverage_fluxo_equipes_ESF_e_ESB_Junt
             percent_n2_n3 * sum(X_n2[n1, n2] for n1 in S_n1 if n2 in dominio_atr_n2[n1]))
                     
     
+    # ------------------------------------------------------------------------------------------------------------------------------------
+    # Funcao Objetivo
+    # -----------------------------------------------------------------------------------------------------------------------------------        
     @expression(model, pop_atendida_ESF, sum(pop_atendida[d, 1, un] * S_IVS[d] for d in S_Pontos_Demanda, un in S_n1 if un in dominio_atr_n1[d]) )
     @expression(model, pop_atendida_ESB, sum(pop_atendida[d, 2, un] * S_IVS[d] for d in S_Pontos_Demanda, un in S_n1 if un in dominio_atr_n1[d]) )
+    @expression(model, pop_atendida_ENASF_FO, sum(var_pop_ponderada_ENASF[n1] for n1 in S_n1))
+    #pop_atendida_ENASF
 
-    #DISCUTIR COM JOAO: Consigo considerar o IVS AQUI? - POR ENQUANTO NAO VOU CONSIDERAR!
-    @expression(model, pop_atendida_ENASF, sum(eq_ENASF[n1, eq_esf, eq_enasf] for n1 in S_n1, eq_esf in S_Equipes_ESF, eq_ENASF in S_Equipes_ENASF)  * 3000)
-    @expression(model, pop_atendida_total, pop_atendida_ESF + pop_atendida_ESB + pop_atendida_ENASF)
+    @expression(model, pop_atendida_total, pop_atendida_ESF + pop_atendida_ESB + pop_atendida_ENASF_FO)
     #Funcao Objetivo:
     @objective(model, Max, pop_atendida_total)
-
+    optimize!(model)
+    obj = objective_value(model)
     # Coletar resultados das equipes ESF
     eval_results = true
     if eval_results == true
@@ -1877,61 +2465,48 @@ function create_optimization_model_maximal_coverage_fluxo_equipes_ESF_e_ESB_Junt
             for n1 in S_n1
                 val = value(eq_ESF_n1[eq, n1])
                 if val > 0
-                    push!(esf_results, (string(eq), string(S_origem_equipes_ESF[eq]), string(n1), val))
+                    #push!(esf_results, (string(eq), string(S_origem_equipes_ESF[eq]), string(n1), val))
+                    println("Equipe $(eq) ativada na unidade $(n1)")
                 end
             end
         end
 
-        # Coletar resultados das equipes ESB
-        esb_results = DataFrame(
-            Equipe = String[],
-            Origem = String[],
-            Destino = String[],
-            Valor = Float64[]
-        )
+        
+
 
         for eq in S_Equipes_ESB
             for n1 in S_n1
                 val = value(eq_ESB_n1[eq, n1])
                 if val > 0
-                    push!(esb_results, (string(eq), string(S_origem_equipes_ESB[eq]), string(n1), val))
+                    #push!(esf_results, (string(eq), string(S_origem_equipes_ESF[eq]), string(n1), val))
+                    println("Equipe $(eq) ativada na unidade $(n1)")
                 end
             end
         end
 
-        println("Resultados das Equipes ESF:")
-        pretty_table(esf_results)
-
-        println("\nResultados das Equipes ESB:")
-        pretty_table(esb_results)
         
-        for n1 in S_n1
-                val = value(eq_ESB_criadas[n1])
+                
+        for eq in S_Equipes_ENASF
+            for n1 in S_n1
+                val = value(eq_ENASF_n1[eq, n1])
                 if val > 0
-                println("Equipe ESB na unidade $(n1): ", val)
+                    #push!(esf_results, (string(eq), string(S_origem_equipes_ESF[eq]), string(n1), val))
+                    println("Equipe $(eq) alocada na unidade $(n1) com valor de $(val)")
                 end
-        end
-
-        for n1 in S_n1
-            val = value(eq_ESF_criadas[n1])
-            if val > 0
-            println("Equipe ESF na unidade $(n1): ", val)
             end
-        end
+        end 
 
+        for i in S_n1
+            for j in dominio_UBS_Emulti[i]
+                val = value(aloc_UBS_proxima_ENASF[i,j])
+                if val > 0
+                    println("UBS $(i) alocada na unidade $(j) com valor de $(val)")
+                end
+            end     
+        end
 
         # Mostrar total atendido por equipe (somando sobre todos os pontos de demanda e unidades)
-        println("Total atendido por equipe:")
-        for eq in S_equipes
-            total_eq = 0.0
-                for d in S_Pontos_Demanda, n1 in S_n1
-                    if n1 in dominio_atr_n1[d]
-                        total_eq += value(pop_atendida[d, eq, n1])
-                    end
-                end
-        end
-
-
+  
         for n1 in S_n1
             if value(Abr_n1[n1]) > 0
                 println(n1)
@@ -1940,50 +2515,521 @@ function create_optimization_model_maximal_coverage_fluxo_equipes_ESF_e_ESB_Junt
         end
     end
 
-    # Restrições para alocação de equipes ENASF e ESF para ENASF
-    
-    # 1. Equipes ENASF só podem ser alocadas em unidades abertas
-    @constraint(model, [n1 in S_n1, eq_esf in S_Equipes_ESF, eq_dest in S_Equipes_ENASF], 
-        eq_ENASF[n1, eq_esf, eq_dest] <= Abr_n1[n1])
-
-    # 2. Cada equipe ESF deve ser alocada a exatamente uma equipe ENASF
-    @constraint(model, [eq_esf in S_Equipes_ESF], 
-        sum(eq_ESF_to_ENASF[eq_esf, eq_dest] for eq_dest in S_Equipes_ENASF) == 1)
-
-    # 3. Cada equipe ENASF pode receber no máximo uma equipe ESF
-    @constraint(model, [eq_dest in S_Equipes_ENASF], 
-        sum(eq_ESF_to_ENASF[eq_esf, eq_dest] for eq_esf in S_Equipes_ESF) <= 1)
-
-    # 4. Restrição de proximidade: equipe ESF só pode ser alocada à ENASF mais próxima
-    for eq_esf in S_Equipes_ESF
-        origem_esf = S_origem_equipes_ESF[eq_esf]
-        
-        # Calcular distâncias para todas as equipes ENASF
-        distancias = Float64[]
-        for eq_dest in S_Equipes_ENASF
-            origem_enasp = S_origem_equipes_ENASF[eq_dest]
-            # Usar a matriz de distância entre unidades n1 (onde estão as origens das equipes)
-            distancia = Matriz_Dist_n1[origem_esf, origem_enasp]
-            push!(distancias, distancia)
-        end
-        
-        # Encontrar a distância mínima
-        distancia_minima = minimum(distancias)
-        
-        # Para cada equipe ENASF, se não for a mais próxima, não pode ser selecionada
-        for (idx_dest, eq_dest) in enumerate(S_Equipes_ENASF)
-            if distancias[idx_dest] > distancia_minima + 1e-6  # tolerância numérica
-                @constraint(model, eq_ESF_to_ENASF[eq_esf, eq_dest] == 0)
-            end
-        end
-    end
-
-    # 5. Restrição adicional: equipe ESF só pode ser alocada à ENASF se ambas estiverem em unidades abertas
-    @constraint(model, [eq_esf in S_Equipes_ESF, eq_dest in S_Equipes_ENASF, n1 in S_n1], 
-        eq_ESF_to_ENASF[eq_esf, eq_dest] <= eq_ENASF[n1, eq_esf, eq_dest])
 
     #Mudar indice para S_Equipes quando tiver 2 implementacoes - ESF e ESB
 
     return model
 
 end
+
+
+
+function create_optimization_model_maximal_coverage_fluxo_equipes_ESF_e_ESB_ENASF_simplificado(indices::ModelIndices, parameters::ModelParameters, mun_data::MunicipalityData)::Model
+
+    # Extrair dados para facilitar a leitura e escrita do modelo!
+    S_n1 = indices.S_n1
+    S_n2 = indices.S_n2
+    S_n3 = indices.S_n3
+    S_locais_candidatos_n1 = indices.S_Locais_Candidatos_n1
+    S_instalacoes_reais_n1 = indices.S_instalacoes_reais_n1
+    S_instalacoes_reais_n2 = indices.S_instalacoes_reais_n2
+    S_instalacoes_reais_n3 = indices.S_instalacoes_reais_n3
+    S_Pontos_Demanda = indices.S_Pontos_Demanda
+
+    S_equipes_n2 = indices.S_equipes_n2
+    S_equipes_n3 = indices.S_equipes_n3
+    S_pacientes =  mun_data.constantes.S_pacientes
+    S_Valor_Demanda = mun_data.S_Valor_Demanda
+    porcentagem_populacao = mun_data.constantes.porcentagem_populacao
+    S_IVS = parameters.IVS
+    mt_emulti = parameters.S_Matriz_Dist.Matriz_Dist_Emulti
+    dominio_atr_n1 = parameters.S_domains.dominio_n1
+
+    #TODO: Retomar workarround de locais candidatos que atendam os pontos sem nenhum opcao no raio critico!
+    dominio_candidatos_n1 = Dict(d => [s for s in dominio_atr_n1[d] if s in S_locais_candidatos_n1] for d in keys(dominio_atr_n1))
+    dominio_UBS_Emulti = Dict(ubs_orig => [ubs_dest for ubs_dest in S_n1 if mt_emulti[ubs_orig, ubs_dest] <= 5] for ubs_orig in S_n1)
+
+
+
+    dominio_atr_n2 = parameters.S_domains.dominio_n2
+    dominio_atr_n3 = parameters.S_domains.dominio_n3
+    
+    percent_n1_n2 = mun_data.constantes.percent_n1_n2
+    percent_n2_n3 = mun_data.constantes.percent_n2_n3
+
+    Cap_n1 = mun_data.constantes.Cap_n1
+    Cap_n2 = mun_data.constantes.Cap_n2
+    Cap_n3 = mun_data.constantes.Cap_n3
+
+
+    capacidade_maxima_por_equipe_n1 = parameters.capacidade_maxima_por_equipe_n1
+    capacidade_maxima_por_equipe_n2 = parameters.S_eq_por_paciente_n2
+    capacidade_maxima_por_equipe_n3 = parameters.S_eq_por_paciente_n3
+
+    S_custo_equipe_n1 = parameters.S_custo_equipe_n1
+    S_custo_equipe_n2 = parameters.S_custo_equipe_n2
+    S_custo_equipe_n3 = parameters.S_custo_equipe_n3
+
+    S_capacidade_CNES_n1 = parameters.S_capacidade_CNES_n1
+    S_capacidade_CNES_n1 = vcat(S_capacidade_CNES_n1, [0.0,0.0])
+    S_capacidade_CNES_n2 = parameters.S_capacidade_CNES_n2
+    S_capacidade_CNES_n3 = parameters.S_capacidade_CNES_n3
+
+    Matriz_Dist_n1 = parameters.S_Matriz_Dist.Matriz_Dist_n1
+    Matriz_Dist_n2 = parameters.S_Matriz_Dist.Matriz_Dist_n2
+    Matriz_Dist_n3 = parameters.S_Matriz_Dist.Matriz_Dist_n3
+
+    custo_deslocamento = mun_data.constantes.custo_transporte  
+    Custo_abertura_n1 = mun_data.constantes.custo_abertura_n1
+    Custo_abertura_n2 = mun_data.constantes.custo_abertura_n2
+    Custo_abertura_n3 = mun_data.constantes.custo_abertura_n3
+
+    S_custo_variavel_n1 = mun_data.constantes.S_custo_variavel_n1
+    S_custo_variavel_n2 = mun_data.constantes.S_custo_variavel_n2
+    S_custo_variavel_n3 = mun_data.constantes.S_custo_variavel_n3
+
+    S_custo_fixo_n1 = mun_data.constantes.S_custo_fixo_n1
+    S_custo_fixo_n2 = mun_data.constantes.S_custo_fixo_n2
+    S_custo_fixo_n3 = mun_data.constantes.S_custo_fixo_n3
+
+    Orcamento_Maximo = parameters.orcamento_maximo
+    ponderador_Vulnerabilidade = parameters.ponderador_Vulnerabilidade
+    S_IVS = ponderador_Vulnerabilidade .* parameters.IVS
+
+    S_Equipes_ESF_Reais = indices.S_Equipes_ESF
+    S_Equipes_ESB_Reais = indices.S_Equipes_ESB
+    S_Equipes_ENASF_Reais = indices.S_Equipes_ENASF
+
+    pop_total = sum(S_Valor_Demanda)
+    eqps_nec_ESB = round((sum(S_Valor_Demanda)/3000) - length(S_Equipes_ESB_Reais)) + 1
+    eqps_nec_ESF = round((sum(S_Valor_Demanda)/3000) - length(S_Equipes_ESF_Reais)) + 1
+    eqps_ENAST = ((eqps_nec_ESF + length(S_Equipes_ESF_Reais) + 1) / 9)
+
+    S_Equipes_ESF_Candidatas = collect(length(S_Equipes_ESF_Reais) + 1: length(S_Equipes_ESF_Reais) + 1 + eqps_nec_ESF)
+    S_Equipes_ESB_Candidatas = collect(length(S_Equipes_ESB_Reais) + 1: length(S_Equipes_ESB_Reais) + 1 + eqps_nec_ESB)
+    S_Equipes_ENASF_Candidatas = collect(length(S_Equipes_ENASF_Reais) + 1: length(S_Equipes_ENASF_Reais) + 1 + eqps_ENAST)
+
+
+    S_Equipes_ENASF = vcat(S_Equipes_ENASF_Reais, S_Equipes_ENASF_Candidatas)
+    S_Equipes_ESF = vcat(S_Equipes_ESF_Reais, S_Equipes_ESF_Candidatas)
+    S_Equipes_ESB = vcat(S_Equipes_ESB_Reais, S_Equipes_ESB_Candidatas)
+
+    S_origem_equipes_ESB = indices.S_origem_equipes_ESB
+    S_origem_equipes_ESF = indices.S_origem_equipes_ESF
+    S_origem_equipes_ENASF = indices.S_origem_equipes_ENASF #EQUIPE - NASF
+    S_equipes = [1,2]
+    ubs_reais_com_setores = []
+    for ubs in S_instalacoes_reais_n1
+        setores_disponiveis = [d for d in S_Pontos_Demanda if ubs in dominio_atr_n1[d]]
+        if !isempty(setores_disponiveis)
+            push!(ubs_reais_com_setores, ubs)
+        end
+    end
+
+        # DIAGNÓSTICO COMPLETO - executar ANTES de definir o modelo
+    println("=== DIAGNÓSTICO DETALHADO DE FACTIBILIDADE ===")
+
+    # 1. Verificar restrição ESF = ESB
+    println("Verificando disponibilidade ESF vs ESB:")
+    println("ESF disponíveis: $(length(S_Equipes_ESF))")
+    println("ESB disponíveis: $(length(S_Equipes_ESB))")
+    if length(S_Equipes_ESF) != length(S_Equipes_ESB)
+        println("PROBLEMA: ESF ≠ ESB - restrição de igualdade é infactível")
+    end
+
+    # 2. Verificar se há equipes suficientes para demanda mínima
+    demanda_total = sum(S_Valor_Demanda)
+    equipes_necessarias_min = ceil(demanda_total / (4 * 3000))  # assumindo 4 equipes por UBS
+    println("Demanda total: $demanda_total")
+    println("Equipes mínimas necessárias: $equipes_necessarias_min")
+    println("Equipes ESF disponíveis: $(length(S_Equipes_ESF))")
+
+    # 3. Verificar orçamento vs custo mínimo realista
+    custo_min_operacional = length(S_Equipes_ESF) * 32000 + length(S_Equipes_ESB) * 32000
+    println("Custo operacional mínimo: $custo_min_operacional")
+    println("Orçamento disponível: $(Orcamento_Maximo * 4)")
+    println("Orçamento suficiente: $(custo_min_operacional <= Orcamento_Maximo * 4)")
+
+    # 4. Verificar UBS reais vs setores
+    ubs_problematicas = []
+    for ubs in S_instalacoes_reais_n1
+        setores = [d for d in S_Pontos_Demanda if ubs in dominio_atr_n1[d]]
+        if isempty(setores)
+            push!(ubs_problematicas, ubs)
+        end
+    end
+    println("UBS reais sem setores disponíveis: $ubs_problematicas")
+    #Indices de equipes candidatas criados!
+    
+    #Removendo ubs 61 dos dados para teste
+
+
+
+
+
+    # --------------------------------------------------------------------------------
+    #MODELO
+    # --------------------------------------------------------------------------------
+    model = Model(HiGHS.Optimizer)
+    
+
+    #atribuicao primária
+    aloc_n1 = @variable(model, Aloc_[d in S_Pontos_Demanda, n1 in dominio_atr_n1[d]], Bin)
+    var_abr_n1 = @variable(model, Abr_n1[n1 in S_n1], Bin) #Abertura unidades primárias
+    #Tipo_equipe (ESF OU ESB), Indice da equipe, destino!
+    #TODO - v0 so com ESF!!
+
+    fluxo_eq_ESF_n1 = @variable(model, eq_ESF_n1[eq in S_Equipes_ESF, n1 in S_n1], Bin)   
+    fluxo_eq_ESB_n1 = @variable(model, eq_ESB_n1[eq in S_Equipes_ESB, n1 in S_n1], Bin) 
+    #fluxo_eq_ENASF_n1 = @variable(model, eq_ENASF_n1[eq in S_Equipes_ENASF, n1 in S_n1], Bin) #Alocacao de ENASF em UBS
+    #aloc_ESF_ENASF_n1 = @variable(model, aloc_ESF_ENASF[eq in S_Equipes_ENASF, eq1 in S_Equipes_ESF] >= 0 )  #Inicialmente continua!
+    
+    #aloc_ESF_ENASF_n1 = @variable(model, aloc_UBS_ENASF[ubs_origem in S_n1, ubs_com_enasf in dominio_ubs_ENASF[ubs_origem]], Bin) #Alocacao de UBS EM UBS
+    
+    var_pop_atendida = @variable(model, pop_atendida[d in S_Pontos_Demanda, eq in S_equipes, n1 in dominio_atr_n1[d]] >= 0) 
+    
+
+    #inicialmente vou somente encaminhar demanda para niveis superiore
+    #Fluxo n2
+    fluxo_n2 = @variable(model, X_n2[n1 in S_n1, n2 in dominio_atr_n2[n1]] >= 0)
+    var_abr_n2 = @variable(model, Abr_n2[n2 in S_n2] == 1, Bin)
+    #Fluxo n3
+    fluxo_n3 = @variable(model, X_n3[n2 in S_n2, n3 in dominio_atr_n3[n2]] >= 0)
+    var_abr_n3 = @variable(model, Abr_n3[n3 in S_n3] == 1, Bin)
+
+
+
+     # ============================================================================================================
+    # RESTRICOES DE TERRITORIZALICAO DAS UBS!
+    # ============================================================================================================
+
+
+    @constraint(model, [d in S_Pontos_Demanda], sum(Aloc_[d, n1] for n1 in dominio_atr_n1[d]) <= 1)
+    @constraint(model, [d in S_Pontos_Demanda, eq in S_equipes, n1 in dominio_atr_n1[d]], var_pop_atendida[d, eq, n1] <= aloc_n1[d, n1] * maximum(S_Valor_Demanda))
+    @constraint(model, [d in S_Pontos_Demanda, eq in S_equipes], sum(var_pop_atendida[d, eq, n1] for n1 in dominio_atr_n1[d]) <= S_Valor_Demanda[d])
+    @constraint(model, [n1 in S_instalacoes_reais_n1], Abr_n1[n1] == 1)
+
+    # ------------------------------------------------------------------------------------------------------------------------------------
+    # Abertura de unidades novas:
+    # -----------------------------------------------------------------------------------------------------------------------------------
+
+    @constraint(model, [d in S_Pontos_Demanda, s in dominio_candidatos_n1[d]], Aloc_[d, s] <= var_abr_n1[s] )
+
+
+
+    #@constraint(model, [n1 in ubs_reais_com_setores], 
+    #sum(Aloc_[d, n1] for d in S_Pontos_Demanda if n1 in dominio_atr_n1[d]) >= 1)
+    # ============================================================================================================
+    # VERSÃO SIMPLIFICADA - VARIÁVEIS E RESTRIÇÕES ENASF
+    # ============================================================================================================
+
+    # VARIÁVEL 1: Cobertura ENASF para cada UBS (binária)
+    #cobertura_ENASF = @variable(model, cobertura_ENASF[n1 in S_n1], Bin)
+    
+    # VARIÁVEL 2: População beneficiada por ENASF (contínua)
+    #pop_ponderada_ubs = @variable(model, pop_ponderada_ubs[n1 in S_n1] >= 0)
+   # beneficio_ENASF_linear = @variable(model, beneficio_ENASF_linear[n1 in S_n1] >= 0)
+   #var_pop_atendida_EMULTI = @variable(model, var_pop_atendida_EMULTI[d in S_Pontos_Demanda] >= 0)
+    # RESTRIÇÃO 1: Uma UBS tem cobertura ENASF se:
+    # - Ela própria tem ENASF, OU
+    # - Existe uma UBS próxima (≤5km) com ENASF e ambas estão abertas
+    #@constraint(model, [n1 in S_n1],
+      #  cobertura_ENASF[n1] <= 
+      #  sum(eq_ENASF_n1[eq, j]  for j in dominio_UBS_Emulti[n1], eq in S_Equipes_ENASF)  # UBS próxima tem ENASF
+    #)
+
+   # @variable(model, setor_coberto_ENASF[d in S_Pontos_Demanda], Bin)
+
+    # Um setor é coberto se pelo menos uma UBS que pode atendê-lo tem ENASF
+    #@constraint(model, [d in S_Pontos_Demanda],
+        #setor_coberto_ENASF[d] <= sum(cobertura_ENASF[n1] for n1 in S_n1 if n1 in dominio_atr_n1[d]))
+    
+    # População ENASF é a demanda ponderada por IVS dos setores cobertos
+   # @constraint(model, [d in S_Pontos_Demanda], 
+       # var_pop_atendida_EMULTI[d] <= S_Valor_Demanda[d] * S_IVS[d] * setor_coberto_ENASF[d])
+    
+
+
+    #So pode ter cobertura uma UBS Aberta!
+    #@constraint(model, [n1 in S_n1], cobertura_ENASF[n1] <= Abr_n1[n1])
+    #@constraint(model, [n1 in S_n1], sum(eq_ENASF_n1[eq, n1] for eq in S_Equipes_ENASF) <= Abr_n1[n1])
+
+
+    # RESTRIÇÃO 4: Cada equipe ENASF só pode ser alocada em uma UBS
+    #@constraint(model, [eq in S_Equipes_ENASF], 
+     #   sum(eq_ENASF_n1[eq, n1] for n1 in S_n1) <= 1)
+
+    # RESTRIÇÃO 5: Máximo 1 ENASF por UBS
+   # @constraint(model, [n1 in S_n1], 
+     #   sum(eq_ENASF_n1[eq, n1] for eq in S_Equipes_ENASF) <= 1)
+
+    # RESTRIÇÃO 6: Limite de UBS atendidas por cada ENASF (distribuição)
+    # Uma UBS com ENASF pode atender no máximo 9 outras UBS (baseado na proporção 1 ENASF:9 ESF)
+    #@constraint(model, [j in S_n1],
+   ## sum(cobertura_ENASF[i] for i in S_n1 if j in dominio_UBS_Emulti[i]) <= 
+    #9 * sum(eq_ENASF_n1[eq, j] for eq in S_Equipes_ENASF))
+    
+    # 8. Definir população ponderada por UBS
+    #@constraint(model, [n1 in S_n1],
+        #pop_ponderada_ubs[n1] == sum(S_Valor_Demanda[d] * S_IVS[d] * cobertura_ENASF[n1] for d in S_Pontos_Demanda if Matriz_Dist_n1[d, n1] <= 5))
+                        
+    # 9. Linearização: beneficio = pop_ponderada * tem_ENASF
+    #max_pop_possivel = 4 * 3000 * maximum(S_IVS)  # Big-M conservador
+    #@constraint(model, [n1 in S_n1],
+       # beneficio_ENASF_linear[n1] <= max_pop_possivel * cobertura_ENASF[n1])
+    #@constraint(model, [n1 in S_n1],
+        #beneficio_ENASF_linear[n1] <= pop_ponderada_ubs[n1])
+    #@constraint(model, [n1 in S_n1],
+        #beneficio_ENASF_linear[n1] >= pop_ponderada_ubs[n1] - max_pop_possivel * (1 - cobertura_ENASF[n1]))
+
+    # 10. ATUALIZAR A FUNÇÃO OBJETIVO
+    #@expression(model, pop_atendida_ENASF_FO, sum(var_pop_atendida_EMULTI[d] for d in S_Pontos_Demanda))
+
+
+    # ------------------------------------------------------------------------------------------------------------------------------------
+    # Capacidades das UBS!
+    # -----------------------------------------------------------------------------------------------------------------------------------
+
+    #Cada unidade pode ter no maximo 4 equipes ESF e 4 equipes ESB!
+    @constraint(model, [n1 in S_n1], sum(eq_ESF_n1[eq, n1] for eq in S_Equipes_ESF) <= 4)
+
+
+    #Limite por equipes!
+    @constraint(model, [n1 in S_n1], sum(var_pop_atendida[d, 1, n1] for d in S_Pontos_Demanda if n1 in dominio_atr_n1[d]) 
+            <= sum(eq_ESF_n1[eq, n1] for eq in S_Equipes_ESF) * 3000)
+
+
+    @constraint(model, [n1 in S_n1], sum(var_pop_atendida[d, 2, n1] for d in S_Pontos_Demanda if n1 in dominio_atr_n1[d]) 
+            <= sum(eq_ESB_n1[eq, n1] for eq in S_Equipes_ESB) * 3000)
+
+
+    # ------------------------------------------------------------------------------------------------------------------------------------
+    # Alocacoes ESF - ESB
+    # -----------------------------------------------------------------------------------------------------------------------------------
+
+    @constraint(model, [n1 in S_n1], 
+        sum(eq_ESB_n1[eq, n1] for eq in S_Equipes_ESB)  == sum(eq_ESF_n1[eq, n1] for eq in S_Equipes_ESF))
+
+    #ESF e ESB Podema atender somente em uma UBS!
+    @constraint(model, [eq in S_Equipes_ESF], sum(eq_ESF_n1[eq, n1] for n1 in S_n1) <= 1)
+    @constraint(model, [eq in S_Equipes_ESB], sum(eq_ESB_n1[eq, n1] for n1 in S_n1) <= 1)
+
+
+    
+
+    
+
+    # ------------------------------------------------------------------------------------------------------------------------------------
+    # Restricoes de Custos
+    # -----------------------------------------------------------------------------------------------------------------------------------
+    @expression(model, custo_contratacao_equipes_esf, sum(eq_ESF_n1[eq, n1] for eq in S_Equipes_ESF_Candidatas, n1 in S_n1) * 30000)
+    @expression(model, custo_realocaca_equipes_esf, sum((Matriz_Dist_n1[S_origem_equipes_ESF[eq], n1] * eq_ESF_n1[eq, n1]) * 100 for eq in S_Equipes_ESF_Reais, n1 in S_n1 ))
+    @expression(model, custo_mensal_equipes_esf, sum(eq_ESF_n1[eq, n1]  for eq in S_Equipes_ESF, n1 in S_n1) * 32000)
+
+
+    @expression(model, custo_contratacao_equipes_esb, sum(eq_ESB_n1[eq, n1] for eq in S_Equipes_ESB_Candidatas, n1 in S_n1) * 30000)
+    @expression(model, custo_realocaca_equipes_esb, sum((Matriz_Dist_n1[S_origem_equipes_ESB[eq], n1] * eq_ESB_n1[eq, n1]) * 100  for eq in S_Equipes_ESB_Reais, n1 in S_n1 ))
+    @expression(model, custo_mensal_equipes_esb, sum(eq_ESB_n1[eq, n1]  for eq in S_Equipes_ESB, n1 in S_n1) * 32000)
+
+
+    #@expression(model, custo_contratacao_equipes_enasf, sum(eq_ENASF_n1[eq, n1] for eq in S_Equipes_ENASF_Candidatas, n1 in S_n1) * 40000)
+    #@expression(model, custo_realocaca_equipes_enasf, sum((Matriz_Dist_n1[S_origem_equipes_ENASF[eq], n1] * eq_ENASF_n1[eq, n1]) * 100  for eq in S_Equipes_ENASF_Reais, n1 in S_n1 ))
+    #@expression(model, custo_mensal_equipes_enasf, sum(eq_ENASF_n1[eq, n1]  for eq in S_Equipes_ENASF, n1 in S_n1) * 90000)
+
+
+    @expression(model, custo_fixo, sum(Abr_n1[n1] * 1500 for n1 in S_n1))
+    @expression(model, custo_abertura, sum(Abr_n1[n1] * 10000 for n1 in S_locais_candidatos_n1))
+
+    
+    @expression(model, custo_contratacao, custo_contratacao_equipes_esf + custo_contratacao_equipes_esb) #+ custo_contratacao_equipes_enasf)
+    @expression(model, custo_realocaca_equipes, custo_realocaca_equipes_esf + custo_realocaca_equipes_esb) #+ custo_mensal_equipes_enasf)
+    @expression(model, custo_mensal_equipes, custo_mensal_equipes_esf + custo_mensal_equipes_esb) #+ custo_mensal_equipes_enasf )
+
+    
+    
+    @expression(model, custo_total, 
+    custo_contratacao
+    + custo_realocaca_equipes 
+    + custo_mensal_equipes
+    + custo_fixo
+    + custo_abertura
+   )
+
+    @constraint(model, custo_total <= Orcamento_Maximo * 4)
+
+    # ------------------------------------------------------------------------------------------------------------------------------------
+    # Restricoes de Fluxo Hierarquico
+    # -----------------------------------------------------------------------------------------------------------------------------------
+    #Fluxo de nivel Secundario!
+    @constraint(model, [n1 in S_n1], 
+                sum(X_n2[n1, n2] for n2 in dominio_atr_n2[n1]) == percent_n1_n2 * sum(pop_atendida[d, eq, n1] 
+                        for  eq in S_equipes, d in S_Pontos_Demanda if n1 in dominio_atr_n1[d]))
+
+
+    #Fluxo de nivel Terciario!
+    @constraint(model, [n2 in S_n2], 
+            sum(X_n3[n2, n3] for n3 in dominio_atr_n3[n2]) == 
+            percent_n2_n3 * sum(X_n2[n1, n2] for n1 in S_n1 if n2 in dominio_atr_n2[n1]))
+                    
+    
+    # ------------------------------------------------------------------------------------------------------------------------------------
+    # Funcao Objetivo
+    # -----------------------------------------------------------------------------------------------------------------------------------        
+    @expression(model, pop_atendida_ESF, sum(pop_atendida[d, 1, un] * S_IVS[d] for d in S_Pontos_Demanda, un in S_n1 if un in dominio_atr_n1[d]) )
+    @expression(model, pop_atendida_ESB, sum(pop_atendida[d, 2, un] * S_IVS[d] for d in S_Pontos_Demanda, un in S_n1 if un in dominio_atr_n1[d]) )
+    #@expression(model, pop_atendida_ENASF_FO, sum(beneficio_ENASF[n1] for n1 in S_n1))
+    #pop_atendida_ENASF
+
+    @expression(model, pop_atendida_total, pop_atendida_ESF + pop_atendida_ESB) #+ pop_atendida_ENASF_FO)
+    @objective(model, Max, pop_atendida_total)
+    optimize!(model)
+
+
+    
+
+    # CONFIGURAÇÕES ADICIONAIS DO SOLVER HIGHS PARA APROVEITAR O WARM START
+# Retirar configurações que podem não funcionar no HiGHS
+    aplicar_warm_start_corrigido!(model)
+
+    # Manter apenas configurações essenciais
+    set_optimizer_attribute(model, "threads", 4)
+
+    println("=== FASE 1: Busca inicial (Gap 15%) ===")
+    set_optimizer_attribute(model, "mip_rel_gap", 0.25)  
+    set_optimizer_attribute(model, "time_limit", 850.0)   
+    optimize!(model)
+
+    if termination_status(model) in [MOI.OPTIMAL, MOI.TIME_LIMIT]
+        gap_atual = MOI.get(model, MOI.RelativeGap())
+        println("Fase 1 concluída - GAP: $(round(100*gap_atual, digits=2))%")
+        println("Valor objetivo atual: $(objective_value(model))")
+        
+        println("=== FASE 2: Refinamento (Gap 5%) ===")
+        set_optimizer_attribute(model, "mip_rel_gap", 0.05)  
+        set_optimizer_attribute(model, "time_limit", 1200.0) 
+        optimize!(model)
+        
+        if termination_status(model) in [MOI.OPTIMAL, MOI.TIME_LIMIT]
+            gap_final = MOI.get(model, MOI.RelativeGap())
+            println("Fase 2 concluída - GAP final: $(round(100*gap_final, digits=2))%")
+        end
+    else
+        println("Fase 1 não encontrou solução factível")
+    end
+
+    obj = objective_value(model)
+    
+    # Coletar resultados das equipes ESF
+    eval_results = true
+    if eval_results == true
+        optimize!(model)
+        obj = objective_value(model)
+        esf_results = DataFrame(
+            Equipe = String[],
+            Origem = String[],
+            Destino = String[],
+            Valor = Float64[]
+        )  
+
+        pop_atendida = value.(model[:pop_atendida])
+        for eq in [1,2]
+            total_eq = 0.0
+           for d in indices.S_Pontos_Demanda, n1 in indices.S_n1
+               if n1 in parameters.S_domains.dominio_n1[d]
+                   total_eq += value(pop_atendida[d, eq, n1])
+               end
+           end
+          println("Equipe $(eq): ", total_eq)
+        end
+
+        total_enasf = 0.0
+        for i in S_n1
+            
+            val = value(beneficio_ENASF[i])
+            total_enasf += val
+            println("UBS $(i): ", val)
+        end
+
+        println("Total Coberto ENASF $(total_enasf)")
+
+
+        for eq in S_Equipes_ESF
+            for n1 in S_n1
+                val = value(eq_ESF_n1[eq, n1])
+                if val > 0
+                    #push!(esf_results, (string(eq), string(S_origem_equipes_ESF[eq]), string(n1), val))
+                    println("Equipe $(eq) ativada na unidade $(n1)")
+                end
+            end
+        end
+
+        
+
+
+        for eq in S_Equipes_ESB
+            for n1 in S_n1
+                val = value(eq_ESB_n1[eq, n1])
+                if val > 0
+                    #push!(esf_results, (string(eq), string(S_origem_equipes_ESF[eq]), string(n1), val))
+                    println("Equipe $(eq) ativada na unidade $(n1)")
+                end
+            end
+        end
+
+        
+                
+        for eq in S_Equipes_ENASF
+            for n1 in S_n1
+                val = value(eq_ENASF_n1[eq, n1])
+                if val > 0
+                    #push!(esf_results, (string(eq), string(S_origem_equipes_ESF[eq]), string(n1), val))
+                    println("Equipe $(eq) alocada na unidade $(n1) com valor de $(val)")
+                end
+            end
+        end 
+
+        for i in S_n1
+                val = value(cobertura_ENASF[i])
+                if val > 0
+                    println("UBS $(i) com Cobertura ENASF")
+                end  
+        end
+
+        # Mostrar total atendido por equipe (somando sobre todos os pontos de demanda e unidades)
+  
+        for n1 in S_n1
+            if value(Abr_n1[n1]) > 0
+                println(n1)
+ 
+            end
+        end
+    end
+
+
+    #Mudar indice para S_Equipes quando tiver 2 implementacoes - ESF e ESB
+
+    return model
+
+end
+
+
+"
+Dificuldades: 
+
+Eu preciso alocar as ESF nas EMULTI porque cada emulti pode atender ate no maximo 9 equipes ESF. 
+
+Como estou maximizando demanda_atendida * Indice_Vulnerabilidade por Setor Censitario, preciso tentar estimar qual a populacao que cada EMULTI vai atender para conseguir maximizar e de fato 
+ter uma solucao, se nao ele nao aloca nenhuma equipe ESF nas EMULTIs
+
+Entao eu tentei (com varias linearizacoes)
+fazer a populacao que cada unidade atende e relacionar com equipes e EMulti, mas nem chega a gerar o modelo
+alocar a UBS na emulti, mas nao consigo manter a restricao de 9 equipes ESF por emulti.
+
+
+De qualquer maneira (que eu pensei ate agora), preciso relacionar 3 conjuntos (UBS - ESF - EMULTI), 
+para conseguir colocar e populacao ponderada por EMULTI na FO e ter a maximizacao e respeitar a alocacao maxima de 9 ESF por EMULTI.
+
+
+
+
+"

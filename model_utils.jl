@@ -199,7 +199,7 @@ function calculate_distance_matrices(mun_data::MunicipalityData, indices::ModelI
     coords_n2 = vcat(coords_unidades_reais_n2, coords_demanda)
     coords_n3 = vcat(coords_unidades_reais_n3, coords_demanda)
     
-
+    Matriz_Dist_Emulti = [vincenty_distance(c1, c2) for c1 in coords_n1, c2 in coords_n1]
     Matriz_Dist_n1 = [vincenty_distance(c1, c2) for c1 in coords_demanda, c2 in coords_n1]
     Matriz_Dist_n2 = [vincenty_distance(c1, c2) for c1 in coords_n1, c2 in coords_n2]
     Matriz_Dist_n3 = [vincenty_distance(c1, c2) for c1 in coords_n2, c2 in coords_n3]
@@ -207,7 +207,8 @@ function calculate_distance_matrices(mun_data::MunicipalityData, indices::ModelI
     
     return Matriz_Dist(Matriz_Dist_n1, 
                       Matriz_Dist_n2, 
-                      Matriz_Dist_n3)
+                      Matriz_Dist_n3, 
+                      Matriz_Dist_Emulti)
 end
 
 
