@@ -2,7 +2,6 @@ using JuMP, HiGHS, JLD2, XLSX, DataFrames, PrettyTables, Random
 using Base: deepcopy 
 
 
-Random.seed!(1234)
 include("healthcare_model.jl")
 include("model_utils.jl")
 include("model_builder.jl")
@@ -20,7 +19,7 @@ function example_usage()
     mun_data = filter_municipality_data(data, municipio)
     
     #TODOs: Deixar mais facil a definicao dos rais criticos!
-    mun_data.constantes.raio_maximo_n1 = 2.0
+    mun_data.constantes.raio_maximo_n1 = 1.5
     #mun_data.constantes.raio_maximo_n2 = 20.0
     #mun_data.constantes.raio_maximo_n3 = 50.0
 
@@ -37,6 +36,12 @@ function example_usage()
     model = create_optimization_model_maximal_coverage_fluxo_equipes(indices, parameters, mun_data)
     #model = create_optimization_model_maximal_coverage_fluxo_equipes_ESF_e_ESB_ENASF_simplificado(indices, parameters, mun_data)
     println("Otimizando modelo...")
+
+    set_optimizer_attribute(model, "primal_feasibility_tolerance", 1e-4)
+    set_optimizer_attribute(model, "dual_feasibility_tolerance", 1e-4)
+    set_optimizer_attribute(model, "time_limit", 300.0)
+    set_optimizer_attribute(model, "mip_rel_gap", 0.05)
+
     optimize!(model)
     
     # Verificar se a otimização foi bem-sucedida
@@ -63,6 +68,8 @@ function example_usage()
         println("\nExtraindo resultados da população atendida...")
         population_results = extract_population_results(model, indices, mun_data)
         
+        println("\nExtraindo fluxo secundario e terciario...")
+        fluxo_secundario_terciario = extract_flow_patients(model, indices, parameters, mun_data)
         # Extrair resultados do fluxo de equipes
         println("\nExtraindo resultados do fluxo de equipes...")
         team_flow_results = extract_team_flow_results(model, indices, parameters, mun_data)
@@ -74,35 +81,22 @@ function example_usage()
         cost_results = extract_cost_results(model)
         
        # Exportar para Excel
-        filename = "Resultados_COBERTURA_MAXIMA_19_END.xlsx"
+        filename = "Resultados_COBERTURA_MAXIMA_23_END.xlsx"
         df_results = export_population_results_to_excel(population_results, filename)
         
         # Adicionar dados do fluxo de equipes (novo formato) ao mesmo arquivo Excel
         df_team_flow = add_team_flow_to_excel(team_flow_results, filename)
         
         # Adicionar dados dos custos ao mesmo arquivo Excel
-        #df_costs  = add_cost_results_to_excel(cost_results, filename)
+        df_costs  = add_cost_results_to_excel(cost_results, filename)
 
         # Adicionar equipes criadas ao mesmo arquivo Excel
         df_created = add_created_teams_to_excel(create_teams, filename)
         
-        # Salvar resultados completos
-        #results = extract_results(model, indices)
-        version_result = "resultados_otimizacao_builder_cenario_4"
-        println("Salvando resultados completos...")
-       # save("resultados_otimizacao_" * version_result * ".jld2", Dict(
-           #"results" => results,
-           # "parameters" => parameters,
-           # "mun_data" => mun_data,
-           # "indices" => indices,
-           # "population_results" => population_results,
-           # "team_flow_results" => team_flow_results,
-            #"cost_results" => cost_results,
-           # "df_team_flow" => df_team_flow,
-           # "df_costs" => df_costs
-       # ))
-        
+        # Adicionar fluxo secundario e terciario()
+        df_flow = add_flow_patientes_to_excel(fluxo_secundario_terciario, filename)
         return model, results, population_results, team_flow_results, cost_results
+    
     else
         println("Erro na otimização: ", termination_status(model))
         return model, nothing, nothing

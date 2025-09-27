@@ -4,12 +4,12 @@ import numpy as np
 import geopandas as gpd
 
 # %%
-path_dados_fim = r"C:\Users\marce\OneDrive\Área de Trabalho\MestradoHierarquico\dados_brutos_demanda\Setor-Censitario-APS.xlsx"
+# path_dados_fim = r"C:\Users\marce\OneDrive\Área de Trabalho\MestradoHierarquico\dados_brutos_demanda\Setor-Censitario-APS.xlsx"
 setores = gpd.read_file(
     r"C:\Users\marce\OneDrive\Área de Trabalho\Repo_Dados_MAPA\mapas\shapes\setores_ligth_processado.gpkg"
 )
 
-dados_fim = pd.read_excel(path_dados_fim, sheet_name="dados")
+# dados_fim = pd.read_excel(path_dados_fim, sheet_name="dados")
 setores["id_setor"] = setores["id_setor"].astype(int)
 
 # %%
@@ -27,12 +27,12 @@ setores["Coordendas_lat_long"] = setores.apply(
 )
 # %%
 
-df_merge = dados_fim[["CD_setor"]].merge(
-    setores[["id_setor", "Coordendas_lat_long"]],
-    left_on="CD_setor",
-    right_on="id_setor",
-    how="left",
-)
+# df_merge = dados_fim[["CD_s setor"]].merge(
+# setores[["id_setor", "Coordendas_lat_long"]],
+# left_on="CD_setor",
+# right_on="id_setor",
+# how="left",
+# )
 # %%
-df_merge.to_excel("Dados_CS_com_coords.xlsx")
+# df_merge.to_excel("Dados_CS_com_coords.xlsx")
 # %%
