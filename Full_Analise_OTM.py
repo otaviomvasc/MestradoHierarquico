@@ -795,7 +795,6 @@ class AnaliseCenario:
             + [max_val]
         )
         bins = sorted(list(set(bins)))
-        fundo_ivs = False
         if fundo_ivs:
             folium.Choropleth(
                 geo_data=resultado_choropleth,
