@@ -694,7 +694,7 @@ Colunas:
 - ubs_origem_esf: CNES da UBS de origem da ESF (quando disponível via `indices.S_origem_equipes_ESF`)
 - lat_origem_esf, long_origem_esf: coordenadas da UBS de origem da ESF (quando disponíveis)
 """
-function extract_aloc_esf_emulti(model_emulti::Model, model::Model, indices::ModelIndices, mun_data::MunicipalityData)::DataFrame
+function extract_aloc_esf_emulti(model_emulti::Model, indices_model_emulti::Indices_modelo_alocacao_ESF_Emulti, indices::ModelIndices, mun_data::MunicipalityData)::DataFrame
     if !haskey(model_emulti.obj_dict, :aloc_ESF)
         error("Variável aloc_ESF não encontrada em model_emulti")
     end
@@ -702,46 +702,121 @@ function extract_aloc_esf_emulti(model_emulti::Model, model::Model, indices::Mod
     aloc_vals = value.(model_emulti[:aloc_ESF])
 
 
-
-
+    #indices_model_emulti.UBS_ESF_alocada_real
+    indice_maximo_equipes_reais_ESF = length(indices_model_emulti.ESF_Reais_abertas)
+    indice_maximo_equipes_reais_Emulti = length(indices_model_emulti.UBS_EMulti_alocada_real)
     idx_esf = Int[]
     idx_emulti = Int[]
     valores = Float64[]
     cnes_eq_esf = Int[]
+    cnes_eq_emulti = Int[]
     ubs_origem_esf = Int[]
+    ubs_origem_emulti = Int[]
     lat_origem_esf = Float64[]
     long_origem_esf = Float64[]
+    lat_emulti = Float64[]
+    long_emulti = Float64[]
 
     #for key in keys(aloc_vals)
     for i in axes(aloc_vals, 1), j in axes(aloc_vals, 2)
         #i, j = key
         v = aloc_vals[i,j]
         if v > 0
-            push!(idx_esf, i)
-            push!(idx_emulti, j)
-            push!(valores, v)
+        #Indices das ESF
+            if i <= indice_maximo_equipes_reais_ESF
+                idx_equipe = indices_model_emulti.ESF_Reais_abertas[i]
+                push!(idx_esf, idx_equipe)
+                push!(cnes_eq_esf, mun_data.equipes_ESF_primario_v2.CO_EQUIPE[idx_equipe])
+                #push!(idx_emulti, j)
+                push!(valores, v)
 
-            if 1 <= i <= length(mun_data.equipes_ESF_primario_v2.CO_EQUIPE)
-                push!(cnes_eq_esf, mun_data.equipes_ESF_primario_v2.CO_EQUIPE[i])
-            else
-                push!(cnes_eq_esf, 0)
-            end
-
-            if hasfield(typeof(indices), :S_origem_equipes_ESF) && 1 <= i <= length(indices.S_origem_equipes_ESF)
-                origem = indices.S_origem_equipes_ESF[i]
-                if 1 <= origem <= length(mun_data.unidades_n1.cnes)
-                    push!(ubs_origem_esf, mun_data.unidades_n1.cnes[origem])
-                    push!(lat_origem_esf, mun_data.unidades_n1.latitude[origem])
-                    push!(long_origem_esf, mun_data.unidades_n1.longitude[origem])
+                #Qual UBS a equipe está alocada ?
+                #Equipes reais
+                ubs_alocada = indices_model_emulti.UBS_ESF_alocada_real[i] #QUal UBS a equipe i esta alocada ?
+                
+                #Essa ubs é real ou é criada ?
+                if ubs_alocada <= length(mun_data.unidades_n1.cnes)
+                    #Real!
+                    push!(ubs_origem_esf, ubs_alocada)
+                    push!(lat_origem_esf, mun_data.unidades_n1.latitude[ubs_alocada])
+                    push!(long_origem_esf, mun_data.unidades_n1.longitude[ubs_alocada])
                 else
-                    push!(ubs_origem_esf, 0)
-                    push!(lat_origem_esf, 0.0)
-                    push!(long_origem_esf, 0.0)
+                    #UBS foi criada e é um ponto de demanda!
+                    push!(ubs_origem_esf, ubs_alocada)
+                    #qual é o ponto de demanda ?
+                    ponto_demanda_origem = ubs_alocada - nrow(mun_data.unidades_n1) 
+                    push!(lat_origem_esf, mun_data.coordenadas[ponto_demanda_origem][1])
+                    push!(long_origem_esf,  mun_data.coordenadas[ponto_demanda_origem][2])
                 end
             else
-                push!(ubs_origem_esf, 0)
-                push!(lat_origem_esf, 0.0)
-                push!(long_origem_esf, 0.0)
+                #Equipes criadas!
+                pos_equipe = i - indice_maximo_equipes_reais_ESF
+                idx_equipe = indices_model_emulti.ESF_criadas[pos_equipe]
+                push!(idx_esf, idx_equipe)
+                push!(cnes_eq_esf, idx_equipe)
+                #push!(idx_emulti, j)
+                push!(valores, v)
+                
+                ubs_alocada = indices_model_emulti.UBS_ESF_alocada_candidata[pos_equipe] #qual UBS ela esta ?
+                #Essa ubs é real ou é criada ?
+                if ubs_alocada <= length(mun_data.unidades_n1.cnes)
+                    #Real!
+                    push!(ubs_origem_esf, ubs_alocada)
+                    push!(lat_origem_esf, mun_data.unidades_n1.latitude[ubs_alocada])
+                    push!(long_origem_esf, mun_data.unidades_n1.longitude[ubs_alocada])
+                else
+                    #UBS foi criada e é um ponto de demanda!
+                    push!(ubs_origem_esf, ubs_alocada)
+                    #qual é o ponto de demanda ?
+                    ponto_demanda_origem = ubs_alocada - nrow(mun_data.unidades_n1) 
+                    push!(lat_origem_esf, mun_data.coordenadas[ponto_demanda_origem][1])
+                    push!(long_origem_esf,  mun_data.coordenadas[ponto_demanda_origem][2])
+                end
+            end
+        #Indices das Emulti
+            if j <= indice_maximo_equipes_reais_Emulti
+                idx_equipe = indices_model_emulti.EMulti_Reais_abertas[j]
+                push!(idx_emulti, idx_equipe)
+                push!(cnes_eq_emulti, mun_data.equipes_ENASF_primario_v2.CO_EQUIPE[idx_equipe])
+                ubs_alocada = indices_model_emulti.UBS_EMulti_alocada_real[j]
+                if ubs_alocada <= length(mun_data.unidades_n1.cnes)
+                    #Real!
+                    push!(ubs_origem_emulti, ubs_alocada)
+                    push!(lat_emulti, mun_data.unidades_n1.latitude[ubs_alocada])
+                    push!(long_emulti, mun_data.unidades_n1.longitude[ubs_alocada])
+                else
+                    #UBS foi criada e é um ponto de demanda!
+                    push!(ubs_origem_esf, ubs_alocada)
+                    #qual é o ponto de demanda ?
+                    ponto_demanda_origem = ubs_alocada - nrow(mun_data.unidades_n1) 
+                    push!(lat_emulti, mun_data.coordenadas[ponto_demanda_origem][1])
+                    push!(long_emulti,  mun_data.coordenadas[ponto_demanda_origem][2])
+                end
+            else
+                #Equipes criadas!
+                pos_equipe = j - indice_maximo_equipes_reais_Emulti
+                idx_equipe = indices_model_emulti.Emulti_criadas[pos_equipe]
+                push!(idx_emulti, idx_equipe)
+                push!(cnes_eq_emulti, idx_equipe)
+                #push!(idx_emulti, j)
+                push!(valores, v)
+                
+                ubs_alocada = indices_model_emulti.UBS_Emulti_criadas[pos_equipe] #qual UBS ela esta ?
+                #Essa ubs é real ou é criada ?
+                if ubs_alocada <= length(mun_data.unidades_n1.cnes)
+                    #Real!
+                    push!(ubs_origem_emulti, ubs_alocada)
+                    push!(lat_emulti, mun_data.unidades_n1.latitude[ubs_alocada])
+                    push!(long_emulti, mun_data.unidades_n1.longitude[ubs_alocada])
+                else
+                    #UBS foi criada e é um ponto de demanda!
+                    push!(ubs_origem_emulti, ubs_alocada)
+                    #qual é o ponto de demanda ?
+                    ponto_demanda_origem = ubs_alocada - nrow(mun_data.unidades_n1) 
+                    push!(lat_emulti, mun_data.coordenadas[ponto_demanda_origem][1])
+                    push!(long_emulti,  mun_data.coordenadas[ponto_demanda_origem][2])
+                end
+
             end
         end
     end
@@ -754,6 +829,9 @@ function extract_aloc_esf_emulti(model_emulti::Model, model::Model, indices::Mod
         "ubs_origem_esf" => ubs_origem_esf,
         "lat_origem_esf" => lat_origem_esf,
         "long_origem_esf" => long_origem_esf,
+        "cnes_eq_emulti" => cnes_eq_emulti,
+        "lat_emulti" => lat_emulti,
+        "long_emulti" => long_emulti
     )
 end
 
@@ -3883,6 +3961,9 @@ function create_model_alocacao_Emulti_ESF(model::Model, indices::ModelIndices, p
 
 
     #Restricoes
+    #TODO: Vale a pena ter que alocar todas as equipes de uma mesma UBS numa mesma EMulti ?
+
+
     #Toda Equipe ESF e ESB tem que ser alocadas a uma equipe Emulti
     @constraint(model_2, [i in S_Equipes_ESF], sum(aloc_ESF[i,j] for j in S_Equipes_Emulti) == 1)
     #@constraint(model_2, [i in S_Equipes_ESB], sum(aloc_ESB[i,j] for j in S_Equipes_Emulti) == 1)

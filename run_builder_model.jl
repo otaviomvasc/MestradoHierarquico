@@ -48,39 +48,9 @@ function example_usage()
     if termination_status(model) == MOI.OPTIMAL
         println("Finalizou ...")
         #Se modelo 1 finalizar rodada, gerar modelo que aloca Emulti nas ESF!
-        println("Criando Modelo Alocacao EsF nas Emultis ...")
-        model_emulti, indices_model_emulti = create_model_alocacao_Emulti_ESF(model, indices, parameters, mun_data)
-        
-        println("Otimizando modelo Emulti...")
-        set_optimizer_attribute(model, "primal_feasibility_tolerance", 1e-4)
-        set_optimizer_attribute(model, "dual_feasibility_tolerance", 1e-4)
-        set_optimizer_attribute(model, "time_limit", 300.0)
-        set_optimizer_attribute(model, "mip_rel_gap", 0.05)
-    
-        optimize!(model_emulti)
-
-        aloc_esf_emulti_df = nothing
-        if termination_status(model_emulti) == MOI.OPTIMAL
-            println("Modelo De alocacao Emulti Finalizado com sucesso")
-            println("Extraindo Resultados da Alocacao Emulti")
-            aloc_esf_emulti_df = extract_aloc_esf_emulti(model_emulti, indices_model_emulti, indices, mun_data)
-        end
-
-        pop_atendida = value.(model[:pop_atendida])
-        for eq in [1,2]
-            total_eq = 0.0
-           for d in indices.S_Pontos_Demanda, n1 in indices.S_n1
-               if n1 in parameters.S_domains.dominio_n1[d]
-                   total_eq += value(pop_atendida[d, eq, n1])
-               end
-           end
-          println("Equipe $(eq): ", total_eq)
-        end
-
-
-
         println("Otimização concluída com sucesso!")
         println("Valor da função objetivo: ", objective_value(model))
+
         
         # Extrair resultados da população atendida
         println("\nExtraindo resultados da população atendida...")
@@ -97,9 +67,31 @@ function example_usage()
         # Extrair resultados dos custos
         println("\nExtraindo resultados dos custos...")
         cost_results = extract_cost_results(model)
+    
+
+
+        println("Criando Modelo Alocacao EsF nas Emultis ...")
+        model_emulti, indices_model_emulti = create_model_alocacao_Emulti_ESF(model, indices, parameters, mun_data)
+        
+        println("Otimizando modelo Emulti...")
+        set_optimizer_attribute(model, "primal_feasibility_tolerance", 1e-4)
+        set_optimizer_attribute(model, "dual_feasibility_tolerance", 1e-4)
+        set_optimizer_attribute(model, "time_limit", 300.0)
+        set_optimizer_attribute(model, "mip_rel_gap", 0.05)
+    
+        optimize!(model_emulti)
+
+        aloc_esf_emulti_df = nothing
+        if termination_status(model_emulti) == MOI.OPTIMAL
+            println("Modelo De alocacao Emulti Finalizado com sucesso")
+            println("Extraindo Resultados da Alocacao Emulti")
+            aloc_esf_emulti_df = extract_aloc_esf_emulti(model_emulti, indices_model_emulti, indices, mun_data)
+        
+        end
+
         
        # Exportar para Excel
-        filename = "Resultados_COBERTURA_MAXIMA_26_END.xlsx"
+        filename = "Resultados_COBERTURA_MAXIMA_27_END.xlsx"
         df_results = export_population_results_to_excel(population_results, filename)
         
         # Adicionar dados do fluxo de equipes (novo formato) ao mesmo arquivo Excel
