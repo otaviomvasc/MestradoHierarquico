@@ -3,3 +3,6 @@ dados_PRONTOS_para_modelo_OTM/~$equipes_Primario_FIM _COMPLETO.xlsb.xlsx
 *.xlsx
 *.png
 *.jld2
+venv/
+.venv/
+*.html

@@ -5,6 +5,7 @@ struct Matriz_Dist
     Matriz_Dist_n1::Matrix{Float64}
     Matriz_Dist_n2::Matrix{Float64}
     Matriz_Dist_n3::Matrix{Float64}
+    Matriz_Dist_Emulti::Matrix{Float64}
 end
 
 mutable struct Domains
@@ -32,6 +33,7 @@ mutable struct HealthcareData
     df_equipes_terciario::DataFrame
     df_necessidades_primario::DataFrame
     df_necessidades_sec_ter::DataFrame
+    df_equipes_primario_v2::DataFrame
 end
 
 mutable struct ModelConstants
@@ -70,8 +72,9 @@ mutable struct ModelConstants
 end
 
 mutable struct MunicipalityData
+    Setor_Censitario::Vector{String}
     nome::String # CD_SETOR => demanda
-    S_Valor_Demanda::Vector{Float64}
+    S_Valor_Demanda::Vector{Int}
     coordenadas::Vector{Tuple{Float64, Float64}}
     S_cnes_primario_referencia_real::Vector{Int64}
     unidades_n1::DataFrame
@@ -82,6 +85,9 @@ mutable struct MunicipalityData
     equipes_n3::DataFrame
     constantes::ModelConstants
     IVS::Vector{Float64}
+    equipes_ESF_primario_v2::DataFrame
+    equipes_ESB_primario_v2::DataFrame
+    equipes_ENASF_primario_v2::DataFrame
     
 end
 
@@ -100,6 +106,12 @@ mutable struct ModelIndices
     S_instalacoes_reais_n2::Vector{Int}
     S_instalacoes_reais_n3::Vector{Int}
     S_atribuicoes_reais_por_demanda::Vector{Int}
+    S_Equipes_ESF::Vector{Int}
+    S_Equipes_ESB::Vector{Int}
+    S_Equipes_ENASF::Vector{Int}
+    S_origem_equipes_ESB::Vector{Int}
+    S_origem_equipes_ESF::Vector{Int}
+    S_origem_equipes_ENASF::Vector{Int}
 end
 
 mutable struct ModelParameters
@@ -115,6 +127,21 @@ mutable struct ModelParameters
     S_Matriz_Dist::Matriz_Dist
     S_domains::Domains
     IVS::Vector{Float64}
+    orcamento_maximo::Float64
+    ponderador_Vulnerabilidade::Float64
+end
+
+
+mutable struct Indices_modelo_alocacao_ESF_Emulti
+    UBS_ESF_alocada_real::Vector{Int64}
+    ESF_Reais_abertas::Vector{Int64}
+    UBS_EMulti_alocada_real::Vector{Int64}
+    EMulti_Reais_abertas::Vector{Int64}
+    UBS_ESF_alocada_candidata::Vector{Int64}
+    ESF_criadas::Vector{Int64}
+    UBS_Emulti_criadas::Vector{Int64}
+    Emulti_criadas::Vector{Int64}
+
 end
 
 # Funções de leitura de dados
@@ -128,7 +155,8 @@ function load_healthcare_data(base_path::String)::HealthcareData
         DataFrame(XLSX.readtable(joinpath(base_path, "df_equipes_secundario.xlsx"), "Sheet1")),
         DataFrame(XLSX.readtable(joinpath(base_path, "df_equipes_terciario.xlsx"), "Sheet1")),
         DataFrame(XLSX.readtable(joinpath(base_path, "equipes_Primario_FIM _COMPLETO.xlsb.xlsx"), "necessidades_Primario")),
-        DataFrame(XLSX.readtable(joinpath(base_path, "equipes_Primario_FIM _COMPLETO.xlsb.xlsx"), "Necessidades_Sec_ter"))
+        DataFrame(XLSX.readtable(joinpath(base_path, "equipes_Primario_FIM _COMPLETO.xlsb.xlsx"), "Necessidades_Sec_ter")),
+        DataFrame(XLSX.readtable(joinpath(base_path, "EQUIPES_NAO_PROCESSADO_MAPA_SUS.xlsx"), "Sheet1"))
     )
 end
 
@@ -140,10 +168,25 @@ function filter_municipality_data(data::HealthcareData, municipio::String)::Muni
     # Filtrar dados do município
     df_m = data.df_demanda[data.df_demanda.NM_MUN .== municipio, :]
     # Criar dicionários usando eachrow
+    S_Setor = [row["CD_SETOR"] for row in eachrow(df_m)]
     S_Valor_Demanda = [row["Total de pessoas"] for row in eachrow(df_m)]
     c_coords = [(row.Latitude, row.Longitude) for row in eachrow(df_m)]
     S_cnes_primario_referencia_real = [row["UBS_ref"] for row in eachrow(df_m)]
     IVS = [row["IVS"] for row in eachrow(df_m)]
+    df_eqps_v2 = data.df_equipes_primario_v2[data.df_equipes_primario_v2.NO_MUNICIPIO .== muncipio_upper, :]
+
+    ##TODO: ATENCAO: Rodar modelo primeiro com ESF e depois voltar para fazer a parte de equipe Bucal!
+    eqs_ESF = [70, 73, 76]
+    eq_ESB  = [71]
+    eq_NASF = [72]
+
+    # Filtra as equipes ESF ativas
+    equipes_ESF_filtradas = filter(row -> row.TP_EQUIPE in eqs_ESF && row.ST_ATIVA == 1 && row.ST_EQUIPE_VALIDA == "S", df_eqps_v2)
+    equipes_ESB_filtradas = filter(row -> row.TP_EQUIPE in eq_ESB && row.ST_ATIVA == 1  && row.ST_EQUIPE_VALIDA == "S", df_eqps_v2)
+    equipes_EMULTI_filtradas = filter(row -> row.TP_EQUIPE in eq_NASF && row.ST_ATIVA == 1  && row.ST_EQUIPE_VALIDA == "S", df_eqps_v2 )
+    # Faz o groupby por CO_CNES e conta a quantidade de CO_EQUIPE por CNES
+
+
     # Quando coletar valores de demanda
 
     # Definição das constantes do modelo - Dados que precisamos melhorar!.
@@ -183,6 +226,7 @@ function filter_municipality_data(data::HealthcareData, municipio::String)::Muni
                     
 
     return MunicipalityData(
+        S_Setor,
         municipio,
         S_Valor_Demanda,
         c_coords,
@@ -216,7 +260,10 @@ function filter_municipality_data(data::HealthcareData, municipio::String)::Muni
             lista_doencas,
             porcentagem_populacao
         ),
-        IVS
+        IVS, 
+        equipes_ESF_filtradas, 
+        equipes_ESB_filtradas,
+        equipes_EMULTI_filtradas
     )
 end
 

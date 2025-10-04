@@ -1,3 +1,5 @@
+using DataFrames
+
 function create_model_indices(mun_data::MunicipalityData)::ModelIndices
     # Calcular quantidades
     qntd_n1_real = nrow(mun_data.unidades_n1)
@@ -25,14 +27,49 @@ function create_model_indices(mun_data::MunicipalityData)::ModelIndices
     
     # Criar conjuntos de equipes
     #TOOD: Salvar esse dado tambem!
-    unique_cbo_n1 = sort(unique(mun_data.equipes_n1.profissional_cbo))
+    #unique_cbo_n1 = sort(unique(mun_data.equipes_n1.profissional_cbo))
     unique_cbo_n2 = sort(unique(mun_data.equipes_n2.profissional_cbo))
     unique_cbo_n3 = sort(unique(mun_data.equipes_n3.profissional_cbo))
     
-    S_equipes_n1 = collect(1:length(unique_cbo_n1))
+    #S_equipes_n1 = collect(1:length(unique_cbo_n1))
+    S_equipes_n1 = [1, 2, 3] #Equipes de saude da familia,  Equipes Saude Bucal e ENASF !
     S_equipes_n2 = collect(1:length(unique_cbo_n2))
     S_equipes_n3 = collect(1:length(unique_cbo_n3))
-    
+
+    mun_data.equipes_ESF_primario_v2
+    mun_data.equipes_ESB_primario_v2
+    S_Equipes_ESF = collect(1:length(mun_data.equipes_ESF_primario_v2.CO_EQUIPE))
+    S_Equipes_ESB = collect(1:length(mun_data.equipes_ESB_primario_v2.CO_EQUIPE))
+    S_Equipes_ENASF = collect(1:length(mun_data.equipes_ENASF_primario_v2.CO_EQUIPE))
+ #preciso garantir que a primeira linha desse df está realmente indicando o indice 1 do 
+
+    # Para cada linha do DataFrame mun_data.equipes_ESB_primario_v2, encontre o índice (linha) correspondente do CO_CNES em mun_data.unidades_n1.cnes
+    # Cria um dicionário: chave = número da linha em equipes_ESB_primario_v2, valor = índice do CNES em unidades_n1.cnes (ou -1 se não encontrado)
+    # Para cada linha do DataFrame, encontre o índice correspondente do CO_CNES em mun_data.unidades_n1.cnes
+    S_origem_equipes_ESB = [
+        begin
+            idx = findfirst(x -> x == row.CO_CNES, mun_data.unidades_n1.cnes)
+            idx === nothing ? -1 : idx
+        end
+        for row in eachrow(mun_data.equipes_ESB_primario_v2)
+    ]
+
+    S_origem_equipes_ESF = [
+        begin
+            idx = findfirst(x -> x == row.CO_CNES, mun_data.unidades_n1.cnes)
+            idx === nothing ? -1 : idx
+        end
+        for row in eachrow(mun_data.equipes_ESF_primario_v2)
+    ]
+
+    S_origem_equipes_ENASF = [
+        begin
+            idx = findfirst(x -> x == row.CO_CNES, mun_data.unidades_n1.cnes)
+            idx === nothing ? -1 : idx
+        end
+        for row in eachrow(mun_data.equipes_ENASF_primario_v2)
+    ]
+
     # Indices de pontos de demanda
     S_pontos_demanda = collect(1:qntd_pontos_demanda)
 
@@ -50,7 +87,13 @@ function create_model_indices(mun_data::MunicipalityData)::ModelIndices
         S_instalacoes_reais_n1,
         S_instalacoes_reais_n2,
         S_instalacoes_reais_n3, 
-        S_atribuicoes_reais_por_demanda
+        S_atribuicoes_reais_por_demanda,
+        S_Equipes_ESF,
+        S_Equipes_ESB,
+        S_Equipes_ENASF,
+        S_origem_equipes_ESB, 
+        S_origem_equipes_ESF,
+        S_origem_equipes_ENASF
     )
 end
 
@@ -156,7 +199,7 @@ function calculate_distance_matrices(mun_data::MunicipalityData, indices::ModelI
     coords_n2 = vcat(coords_unidades_reais_n2, coords_demanda)
     coords_n3 = vcat(coords_unidades_reais_n3, coords_demanda)
     
-
+    Matriz_Dist_Emulti = [vincenty_distance(c1, c2) for c1 in coords_n1, c2 in coords_n1]
     Matriz_Dist_n1 = [vincenty_distance(c1, c2) for c1 in coords_demanda, c2 in coords_n1]
     Matriz_Dist_n2 = [vincenty_distance(c1, c2) for c1 in coords_n1, c2 in coords_n2]
     Matriz_Dist_n3 = [vincenty_distance(c1, c2) for c1 in coords_n2, c2 in coords_n3]
@@ -164,7 +207,8 @@ function calculate_distance_matrices(mun_data::MunicipalityData, indices::ModelI
     
     return Matriz_Dist(Matriz_Dist_n1, 
                       Matriz_Dist_n2, 
-                      Matriz_Dist_n3)
+                      Matriz_Dist_n3, 
+                      Matriz_Dist_Emulti)
 end
 
 
@@ -230,16 +274,33 @@ function calculate_equipment_parameters(mun_data::MunicipalityData, data::Health
     }
     
     # Nível 1 (Primário)
-    lista_equipes_n1 = Vector{String}(unique(mun_data.equipes_n1.profissional_cbo))
+    #O que eu preciso saber?
+    #Qual Indice de UBS esta cada equipe 
+    # Para cada linha do DataFrame mun_data.equipes_ESB_primario_v2, encontre o índice (linha) correspondente do CO_CNES em mun_data.unidades_n1.cnes
+
+    lista_equipes_n1 = Vector{String}(["MEDICO_FAMILIA"])
+
     capacidade_n1, custo_n1 = calculate_team_parameters(
         lista_equipes_n1, 
         data.df_necessidades_primario
     )
-    matriz_cap_n1 = calculate_equipment_capacity_matrix(
-        mun_data.unidades_n1,
-        mun_data.equipes_n1,
-        lista_equipes_n1
-    )
+    #Vetor de equipes!
+    
+    #matriz_cap_n1 = calculate_equipment_capacity_matrix(
+      #  mun_data.unidades_n1,
+       # mun_data.equipes_n1,
+       # lista_equipes_n1
+    #)
+    # Cria uma coluna "linha_unidades_n1" que indica a linha em mun_data.unidades_n1 onde o CO_CNES aparece na coluna cnes
+    # Ordena o DataFrame equipes_por_cnes pela coluna linha_unidades_n1
+
+
+    # Cria uma matriz (coluna única) com os valores ordenados da coluna qtd_equipes
+
+    #matriz_cap_n1 = reshape(collect(equipes_por_cnes_sorted.qtd_equipes), :, 1)
+    matriz_cap_n1 = reshape(collect(10), :, 1)
+    #preciso descobrir qual posicao do vetor e cada CNES!
+    
     
     # Nível 2 (Secundário)
     lista_equipes_n2 = Vector{String}(unique(mun_data.equipes_n2.profissional_cbo))
@@ -418,7 +479,9 @@ function create_model_parameters(mun_data::MunicipalityData, data::HealthcareDat
         matriz_cap_n3,
         S_Matriz_Dist,
         dominios_model, 
-        IVS
+        IVS,
+        3000000.0,  # orcamento_maximo - valor padrão
+        10.0        # ponderador_Vulnerabilidade - valor padrão
     )
 end
 
