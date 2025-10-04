@@ -881,7 +881,7 @@ function extract_created_teams_df(model::Model, indices::ModelIndices, parameter
     v_esb = Float64[]
     v_esf = Float64[]
     v_enasf = Float64[]
-    v_cobertura_enasf = Int[]
+    v_cobertura_enasf = []
 
     for n1 in indices.S_n1
         push!(ubs, n1)
@@ -993,9 +993,27 @@ function extract_flow_patients(model::Model, indices::ModelIndices, parameters::
     long_origem = Float64[]
     lat_destino = Float64[]
     long_destino = Float64[]
+    n2_mais_proximo = Dict{Int, Int}()
+
+    Matriz_Dist_n1 = parameters.S_Matriz_Dist.Matriz_Dist_n1
+    Matriz_Dist_n2 = parameters.S_Matriz_Dist.Matriz_Dist_n2
+    Matriz_Dist_n3 = parameters.S_Matriz_Dist.Matriz_Dist_n3
+    
+    for n1 in indices.S_n1
+        if !isempty(parameters.S_domains.dominio_n2[n1])
+            n2_mais_proximo[n1] = argmin(n2 -> Matriz_Dist_n2[n1, n2], parameters.S_domains.dominio_n2[n1])
+        end
+    end
+
+    n3_mais_proximo = Dict{Int, Int}()
+    for n2 in indices.S_n2
+        if !isempty(parameters.S_domains.dominio_n3[n2])
+            n3_mais_proximo[n2] = argmin(n3 -> Matriz_Dist_n3[n2, n3], parameters.S_domains.dominio_n3[n2])
+        end
+    end
 
 
-    for n1 in indices.S_n1, n2 in parameters.S_domains.dominio_n2[n1]
+    for n1 in indices.S_n1, n2 in n2_mais_proximo[n1]
         vl_fl = pop_fluxo_sec[n1, n2]
         if vl_fl > 0
             push!(nivel, 2)
@@ -1019,7 +1037,7 @@ function extract_flow_patients(model::Model, indices::ModelIndices, parameters::
     end
 
 
-    for n2 in indices.S_n2, n3 in parameters.S_domains.dominio_n3[n2]
+    for n2 in indices.S_n2, n3 in n3_mais_proximo[n2]
         vl_fl = pop_fluxo_terc[n2, n3]
         if vl_fl > 0
             push!(nivel, 3)
@@ -1031,7 +1049,7 @@ function extract_flow_patients(model::Model, indices::ModelIndices, parameters::
             push!(fluxo_pacientes, vl_fl)
             push!(cnes_origem, mun_data.unidades_n2.cnes[n2])
             push!(lat_origem,  mun_data.unidades_n2.latitude[n2])
-            push!(long_origem, mun_data.unidades_n3.longitude[n3])
+            push!(long_origem, mun_data.unidades_n2.longitude[n2])
 
         end
     end
@@ -1683,6 +1701,21 @@ function create_optimization_model_maximal_coverage_fluxo_equipes(indices::Model
     mt_emulti = parameters.S_Matriz_Dist.Matriz_Dist_Emulti
     dominio_UBS_Emulti = Dict(ubs_orig => [ubs_dest for ubs_dest in S_n1 if mt_emulti[ubs_orig, ubs_dest] <= 5] for ubs_orig in S_n1)
 
+    n2_mais_proximo = Dict{Int, Int}()
+    for n1 in S_n1
+        if !isempty(dominio_atr_n2[n1])
+            n2_mais_proximo[n1] = argmin(n2 -> Matriz_Dist_n2[n1, n2], dominio_atr_n2[n1])
+        end
+    end
+
+    n3_mais_proximo = Dict{Int, Int}()
+    for n2 in S_n2
+        if !isempty(dominio_atr_n3[n2])
+            n3_mais_proximo[n2] = argmin(n3 -> Matriz_Dist_n3[n2, n3], dominio_atr_n3[n2])
+        end
+    end
+
+
 
     cap_equipes_n1 = 3000
 
@@ -1704,10 +1737,10 @@ function create_optimization_model_maximal_coverage_fluxo_equipes(indices::Model
     
     #inicialmente vou somente encaminhar demanda para niveis superiore
     #Fluxo n2
-    fluxo_n2 = @variable(model, X_n2[n1 in S_n1, n2 in dominio_atr_n2[n1]] >= 0)
+    fluxo_n2 = @variable(model, X_n2[n1 in S_n1, n2 in n2_mais_proximo[n1]] >= 0)
     var_abr_n2 = @variable(model, Abr_n2[n2 in S_n2] == 1, Bin)
     #Fluxo n3
-    fluxo_n3 = @variable(model, X_n3[n2 in S_n2, n3 in dominio_atr_n3[n2]] >= 0)
+    fluxo_n3 = @variable(model, X_n3[n2 in S_n2, n3 in n3_mais_proximo[n2]] >= 0)
     var_abr_n3 = @variable(model, Abr_n3[n3 in S_n3] == 1, Bin)
 
     # ============================================================================================================
@@ -1856,15 +1889,16 @@ function create_optimization_model_maximal_coverage_fluxo_equipes(indices::Model
 
     #Fluxo de nivel Secundario!
     @constraint(model, [n1 in S_n1], 
-                sum(X_n2[n1, n2] for n2 in dominio_atr_n2[n1]) == percent_n1_n2 * sum(pop_atendida[d, 1, n1] 
-                        for d in S_Pontos_Demanda if n1 in dominio_atr_n1[d]))
-
+    sum(X_n2[n1, n2] for n2 in n2_mais_proximo[n1]) == percent_n1_n2 * sum(pop_atendida[d, 1, n1] 
+            for d in S_Pontos_Demanda if n1 in dominio_atr_n1[d]))
+    
 
     #Fluxo de nivel Terciario!
     @constraint(model, [n2 in S_n2], 
-            sum(X_n3[n2, n3] for n3 in dominio_atr_n3[n2]) == 
-            percent_n2_n3 * sum(X_n2[n1, n2] for n1 in S_n1 if n2 in dominio_atr_n2[n1]))
-                    
+        sum(X_n3[n2, n3] for n3 in n3_mais_proximo[n2]) == 
+        percent_n2_n3 * sum(X_n2[n1, n2] for n1 in S_n1 if n2 in n2_mais_proximo[n1]))
+            
+
 
     #Funcao Objetivo:
     @objective(model, Max, sum(pop_atendida[d, eq, un] * S_IVS[d] for d in S_Pontos_Demanda, eq in S_equipes, un in S_n1 if un in dominio_atr_n1[d]) 
@@ -1872,10 +1906,6 @@ function create_optimization_model_maximal_coverage_fluxo_equipes(indices::Model
     #+ sum(var_equidade[eq] * vls_eq[eq] for eq in S_equipes)
 
     
-
-    # =============================================================================================================
-    # Tentativa warm START
-    # =============================================================================================================
 
     return model
 

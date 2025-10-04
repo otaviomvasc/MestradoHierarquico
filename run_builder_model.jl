@@ -91,7 +91,7 @@ function example_usage()
 
         
        # Exportar para Excel
-        filename = "Resultados_COBERTURA_MAXIMA_27_END.xlsx"
+        filename = "Resultados_COBERTURA_MAXIMA_31_END.xlsx"
         df_results = export_population_results_to_excel(population_results, filename)
         
         # Adicionar dados do fluxo de equipes (novo formato) ao mesmo arquivo Excel

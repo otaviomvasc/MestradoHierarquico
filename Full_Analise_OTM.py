@@ -974,7 +974,7 @@ class AnaliseCenario:
         for idx, row in pontos_origem_unicos.iterrows():
             folium.CircleMarker(
                 location=[row[lat_origem], row[long_origem]],
-                radius=5,
+                radius=1.5,
                 popup=f"Origem: ({row[lat_origem]:.4f}, {row[long_origem]:.4f})",
                 color="black",
                 fillColor="white",
@@ -987,7 +987,7 @@ class AnaliseCenario:
         for idx, row in pontos_destino_unicos.iterrows():
             folium.CircleMarker(
                 location=[row[lat_destino], row[long_destino]],
-                radius=7,
+                radius=2,
                 popup=f"UBS: ({row[lat_destino]:.4f}, {row[long_destino]:.4f})",
                 color="black",
                 fillColor="black",
@@ -1081,17 +1081,19 @@ class AnaliseCenario:
         config_niveis = {
             "secundario": {
                 "df": df_sec,
-                "cor_linha": "blue",
-                "cor_destino": "blue",
+                "cor_linha": "yellow",
+                "cor_destino": "yellow",
                 "nome": "Nível Secundário",
-                "radius_destino": 8,
+                "radius_destino": 2.5,
+                "cor_origem": "yellow",
             },
             "terciario": {
                 "df": df_terc,
                 "cor_linha": "green",
                 "cor_destino": "green",
                 "nome": "Nível Terciário",
-                "radius_destino": 9,
+                "radius_destino": 3,
+                "cor_origem": "green",
             },
         }
 
@@ -1117,7 +1119,7 @@ class AnaliseCenario:
 
             # Definir espessura mínima e máxima das linhas para este nível
             min_weight = 1
-            max_weight = 4
+            max_weight = 3
 
             print(f"{config['nome']} - Fluxo Min: {min_fluxo}, Max: {max_fluxo}")
 
@@ -1131,7 +1133,7 @@ class AnaliseCenario:
                     location=[row["lat_destino"], row["long_destino"]],
                     radius=config["radius_destino"],
                     popup=f"{config['nome']}: ({row['lat_destino']:.4f}, {row['long_destino']:.4f})",
-                    color="black",
+                    color=config["cor_origem"],
                     fillColor=config["cor_destino"],
                     fillOpacity=0.8,
                     weight=2,
@@ -1146,7 +1148,10 @@ class AnaliseCenario:
                     )
                     weight = min_weight + (max_weight - min_weight) * normalized_fluxo
                 else:
-                    weight = min_weight
+                    if nivel == "terciario":
+                        weight = 5
+                    else:
+                        weight = max_weight
 
                 # Coordenadas de origem e destino
                 coords_origem = [row["lat_origem"], row["long_origem"]]
@@ -1186,7 +1191,7 @@ class AnaliseCenario:
 
         print("LOGGING: MAPA COMPLETO GERADO COM SUCESSO!")
         print("- Fluxos primários (cinza): ESF")
-        print("- Fluxos secundários (azul): Nível 2")
+        print("- Fluxos secundários (amarelo): Nível 2")
         print("- Fluxos terciários (verde): Nível 3")
 
         return mapa_base, df_base
@@ -1657,6 +1662,10 @@ class ComparaResultadoBaseline:
         # cols_compare_ESB = 'pop_captada_eSB',  'Populacao_Atendida_ESB'
 
     def analises(self, tamanho_faixa=50):
+        # Analises descritivas de quantidades de equipes reais x criadas
+
+        # Analise de custo - Diferenca entre baseline e modelo
+
         figura, dados = self.analisa_cobertura_comparativa_por_ivs_2(
             tamanho_faixa=tamanho_faixa
         )
@@ -1965,12 +1974,12 @@ class ComparaResultadoBaseline:
 
 
 def main():
-    path_cenario = r"C:\Users\marce\OneDrive\Área de Trabalho\MestradoHierarquico\Resultados_COBERTURA_MAXIMA_26_END.xlsx"
+    path_cenario = r"C:\Users\marce\OneDrive\Área de Trabalho\MestradoHierarquico\Resultados_COBERTURA_MAXIMA_31_END.xlsx"
     path_baseline = r"C:\Users\marce\OneDrive\Área de Trabalho\MestradoHierarquico\resultados_Baseline_DataSus_Cobertura_por_equipes.xlsx"
-    comparador_cenario = ComparaResultadoBaseline(
-        path_cenario=path_cenario, path_baseline=path_baseline
-    )
-    comparador_cenario.analises(tamanho_faixa=50)
+    # comparador_cenario = ComparaResultadoBaseline(
+    # path_cenario=path_cenario, path_baseline=path_baseline
+    # )
+    # comparador_cenario.analises(tamanho_faixa=50)
 
     # Salvar gráfico
     # figura.savefig("comparacao_cobertura_esf_esb.png", dpi=300, bbox_inches="tight")
@@ -1980,9 +1989,9 @@ def main():
     # print(df_esb)
     # analise_baseline = AnaliseBaselineMapaSus(path_baseline)
 
-    # analise_cen = AnaliseCenario(path_cenario=path_cenario)
+    analise_cen = AnaliseCenario(path_cenario=path_cenario)
     # map, _ = analise_cen.plota_fluxo_pacientes(fundo_ivs=False)
-    # map, _ = analise_cen.plota_fluxo_pacientes_secundario_terciario()
+    map, _ = analise_cen.plota_fluxo_pacientes_secundario_terciario()
     # map, _ = analise_cen.plota_fluxo_equipes()
     # analise_cen.analise_descritiva_cenario()
 
