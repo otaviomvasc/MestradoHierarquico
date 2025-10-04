@@ -294,7 +294,9 @@ function export_population_results_to_excel(population_results::Vector{Populatio
         "Lon_Demanda" => [r.coord_demanda_lon for r in population_results],
         "Lat_UBS" => [r.coord_ubs_lat for r in population_results],
         "Lon_UBS" => [r.coord_ubs_lon for r in population_results], 
-        "IVS" => [r.ivs for r in population_results]
+        "IVS" => [r.ivs for r in population_results],
+        "Cnes_Destino" => [r.cnes for r in population_results],
+        "Nome_Fantasia_Destino" => [r.nome_fantasia for r in population_results]
     )
     
     # Adicionar coluna de percentual de atendimento
@@ -678,6 +680,99 @@ function add_flow_patientes_to_excel(df::DataFrame, filename::String)
 
     println("Aba 'Fluxo_Equipes' adicionada com sucesso!")
     println("Linhas: ", nrow(df), " | Colunas: ", ncol(df))
+    return df
+end
+
+"""
+Extrai as alocações ESF→Emulti do modelo `model_emulti` (variável `aloc_ESF`) e retorna um DataFrame.
+
+Colunas:
+- Indice_ESF: índice da equipe ESF (i)
+- Indice_Emulti: índice da equipe Emulti (j)
+- Valor: valor binário da variável aloc_ESF[i,j]
+- cnes_eq_esf: código da equipe ESF (quando disponível em `mun_data`)
+- ubs_origem_esf: CNES da UBS de origem da ESF (quando disponível via `indices.S_origem_equipes_ESF`)
+- lat_origem_esf, long_origem_esf: coordenadas da UBS de origem da ESF (quando disponíveis)
+"""
+function extract_aloc_esf_emulti(model_emulti::Model, model::Model, indices::ModelIndices, mun_data::MunicipalityData)::DataFrame
+    if !haskey(model_emulti.obj_dict, :aloc_ESF)
+        error("Variável aloc_ESF não encontrada em model_emulti")
+    end
+
+    aloc_vals = value.(model_emulti[:aloc_ESF])
+
+
+
+
+    idx_esf = Int[]
+    idx_emulti = Int[]
+    valores = Float64[]
+    cnes_eq_esf = Int[]
+    ubs_origem_esf = Int[]
+    lat_origem_esf = Float64[]
+    long_origem_esf = Float64[]
+
+    #for key in keys(aloc_vals)
+    for i in axes(aloc_vals, 1), j in axes(aloc_vals, 2)
+        #i, j = key
+        v = aloc_vals[i,j]
+        if v > 0
+            push!(idx_esf, i)
+            push!(idx_emulti, j)
+            push!(valores, v)
+
+            if 1 <= i <= length(mun_data.equipes_ESF_primario_v2.CO_EQUIPE)
+                push!(cnes_eq_esf, mun_data.equipes_ESF_primario_v2.CO_EQUIPE[i])
+            else
+                push!(cnes_eq_esf, 0)
+            end
+
+            if hasfield(typeof(indices), :S_origem_equipes_ESF) && 1 <= i <= length(indices.S_origem_equipes_ESF)
+                origem = indices.S_origem_equipes_ESF[i]
+                if 1 <= origem <= length(mun_data.unidades_n1.cnes)
+                    push!(ubs_origem_esf, mun_data.unidades_n1.cnes[origem])
+                    push!(lat_origem_esf, mun_data.unidades_n1.latitude[origem])
+                    push!(long_origem_esf, mun_data.unidades_n1.longitude[origem])
+                else
+                    push!(ubs_origem_esf, 0)
+                    push!(lat_origem_esf, 0.0)
+                    push!(long_origem_esf, 0.0)
+                end
+            else
+                push!(ubs_origem_esf, 0)
+                push!(lat_origem_esf, 0.0)
+                push!(long_origem_esf, 0.0)
+            end
+        end
+    end
+
+    return DataFrame(
+        "Indice_ESF" => idx_esf,
+        "Indice_Emulti" => idx_emulti,
+        "Valor" => valores,
+        "cnes_eq_esf" => cnes_eq_esf,
+        "ubs_origem_esf" => ubs_origem_esf,
+        "lat_origem_esf" => lat_origem_esf,
+        "long_origem_esf" => long_origem_esf,
+    )
+end
+
+function add_aloc_esf_emulti_to_excel(df::DataFrame, filename::String)
+    XLSX.openxlsx(filename, mode="rw") do xf
+        sheet = XLSX.addsheet!(xf, "Aloc_ESF_Emulti")
+        headers = names(df)
+        for (j, h) in enumerate(headers)
+            col = Char('A' + j - 1)
+            sheet["$(col)1"] = String(h)
+        end
+        for (i, row) in enumerate(eachrow(df))
+            for (j, h) in enumerate(headers)
+                col = Char('A' + j - 1)
+                sheet["$(col)$(i+1)"] = row[h]
+            end
+        end
+    end
+    println("Aba 'Aloc_ESF_Emulti' adicionada com sucesso!")
     return df
 end
 
@@ -1258,7 +1353,7 @@ function gerar_excel_funcao_objetivo(model, nome_arquivo="resultados_funcao_obje
     println("  2. Custos Agregados") 
     println("  3. Variaveis Decisao")
     println("  4. Resumo Executivo")
-end
+end 
 
 
 function create_optimization_model_maximal_coverage_INICIAL(indices::ModelIndices, parameters::ModelParameters, mun_data::MunicipalityData)::Model
@@ -1675,7 +1770,7 @@ function create_optimization_model_maximal_coverage_fluxo_equipes(indices::Model
     + custo_abertura
    )
 
-    @constraint(model, custo_total <= Orcamento_Maximo * 3)
+    @constraint(model, custo_total <= Orcamento_Maximo)
 
     # ============================================================================================================
     # Multi-Fluxo
@@ -3633,4 +3728,198 @@ function warm_start_ENASF_inteligente!(model)
     
     println("ENASFs alocadas em $(length(ubs_com_enasf)) UBS")
     println("Warm start ENASF aplicado!")
+end
+
+
+function create_model_alocacao_Emulti_ESF(model::Model, indices::ModelIndices, parameters::ModelParameters, mun_data::MunicipalityData)::Tuple{Model, Indices_modelo_alocacao_ESF_Emulti} 
+
+    S_n1 = indices.S_n1
+    S_locais_candidatos_n1 = indices.S_Locais_Candidatos_n1
+    S_Equipes_ESF =  indices.S_Equipes_ESF
+    S_Equipes_ESB =  indices.S_Equipes_ESB
+    S_Equipes_ENASF = indices.S_Equipes_ENASF
+    mt_emulti = parameters.S_Matriz_Dist.Matriz_Dist_Emulti
+
+    
+    #resultado_equipes = extrair_equipes_alocadas(model)
+    esf_vals = value.(model[:eq_ESF_n1])
+    enasf_vals = value.(model[:eq_ENASF_n1])
+    eqs_ESF_criadas = value.(model[:eq_ESF_criadas])
+    eqs_Emulti_criadas = value.(model[:eq_enasf_criadas])
+
+    esb_vals = value.(model[:eq_ESB_n1])
+    eqs_ESB_criadas = value.(model[:eq_ESB_criadas])
+
+
+    S_ESF_reais_abertas = []
+    S_UBS_ESF_reais = []
+
+    S_ESB_reais_abertas = []
+    S_UBS_ESB_reais = []
+
+
+    S_Emulti_reais_abertas = []
+    S_UBS_Emulti_reais = []
+
+    S_ESF_criadas = []
+    S_UBS_ESF_criadas = []
+
+    S_ESB_criadas = []
+    S_UBS_ESB_criadas = []
+
+
+    S_Emulti_criadas = []
+    S_UBS_Emulti_criadas = []
+
+    idx_fake_ESF = 1000
+    idx_fake_ESB = 1000
+    idx_fake_Emulti = 1000
+
+    for eq in S_Equipes_ESF
+        for n1 in S_n1
+            try
+                if esf_vals[eq, n1] > 0
+                    push!(S_UBS_ESF_reais, n1)
+                    push!(S_ESF_reais_abertas, eq)
+                end
+            catch e
+                # Ignora se a chave não existe
+            end
+        end
+    end
+ 
+    for eq in S_Equipes_ESB
+        for n1 in S_n1
+            try
+                if esb_vals[eq, n1] > 0
+                    push!(S_UBS_ESB_reais, n1)
+                    push!(S_ESB_reais_abertas, eq)
+                end
+            catch e
+                # Ignora se a chave não existe
+            end
+        end
+    end
+
+    for eq in S_Equipes_ENASF, n1 in S_n1
+        if enasf_vals[eq, n1] > 0
+            push!(S_UBS_Emulti_reais, n1)
+            push!(S_Emulti_reais_abertas, eq)
+        end
+    end
+    
+    #ESF criadas por UBS
+    for n1 in S_n1
+        if eqs_ESF_criadas[n1] > 0
+            qntd_eqs_criadas = ceil(eqs_ESF_criadas[n1])
+            for _ in 1:Int(qntd_eqs_criadas)
+                push!(S_UBS_ESF_criadas, n1)
+                push!(S_ESF_criadas, idx_fake_ESF + n1)
+                idx_fake_ESF += 1000
+            end
+        end
+    end
+
+    #ESB criadas por UBS
+    for n1 in S_n1
+        if eqs_ESB_criadas[n1] > 0
+            qntd_eqs_criadas = ceil(eqs_ESB_criadas[n1])
+            for _ in 1:Int(qntd_eqs_criadas)
+                push!(S_UBS_ESB_criadas, n1)
+                push!(S_ESB_criadas, idx_fake_ESB + n1)
+                idx_fake_ESB += 1000
+            end
+        end
+    end
+
+    #Emulti criadas por UBS
+    for n1 in S_n1
+        if eqs_Emulti_criadas[n1] > 0
+            qntd_eqs_criadas = ceil(eqs_Emulti_criadas[n1])
+            for _ in 1:Int(qntd_eqs_criadas)
+                push!(S_UBS_Emulti_criadas, n1)
+                push!(S_Emulti_criadas, idx_fake_Emulti + n1)
+                idx_fake_Emulti += 1000
+            end
+        end
+    end
+
+    indices_aloc = Indices_modelo_alocacao_ESF_Emulti(
+        S_UBS_ESF_reais,
+        S_ESF_reais_abertas,
+        S_UBS_Emulti_reais, 
+        S_Emulti_reais_abertas,
+        S_UBS_ESF_criadas,
+        S_ESF_criadas,
+        S_UBS_Emulti_criadas,
+        S_Emulti_criadas
+    )
+
+    Equipes_ESF = vcat(S_ESF_reais_abertas, S_ESF_criadas)
+    S_equipes_ESF_reais = collect(1:length(S_ESF_reais_abertas) )
+    S_equipes_ESF_candidatas = collect(length(S_ESF_reais_abertas) + 1: length(S_ESF_reais_abertas) + length(S_ESF_criadas) )
+    S_Equipes_ESF = vcat(S_equipes_ESF_reais, S_equipes_ESF_candidatas)
+
+    
+
+    Equipes_ESB = vcat(S_ESB_reais_abertas, S_ESB_criadas)
+    S_equipes_ESB_reais = collect(1:length(S_ESB_reais_abertas) )
+    S_equipes_ESB_candidatas = collect(length(S_ESB_reais_abertas) + 1: length(S_ESB_reais_abertas) + length(S_ESB_criadas) )
+    S_Equipes_ESB = vcat(S_equipes_ESB_reais, S_equipes_ESB_candidatas)
+
+
+    Equipes_Emulti = vcat(S_Emulti_reais_abertas, S_Emulti_criadas)
+    S_equipes_Emulti_reais = collect(1:length(S_Emulti_reais_abertas) )
+    S_equipes_Emulti_candidatas = collect(length(S_Emulti_reais_abertas) + 1: length(S_Emulti_reais_abertas) + length(S_Emulti_criadas) )
+    S_Equipes_Emulti = vcat(S_equipes_Emulti_reais, S_equipes_Emulti_candidatas)
+
+    # Extrair do model quais foram as ESF Abertas, quantas foram criadas e em qual UBS (variaveis  eq_ESF_n1[eq in S_Equipes_ESF, n1 in S_n1] e eq_ESF_criadas[n1 in S_n1])
+    # Extrair do model quais foram as Emulti Abertas, criadas e onde foram alocadas (eq_ENASF_n1[eq in S_Equipes_ENASF, n1 in S_n1] e  eq_enasf_criadas[n1 in S_n1])
+
+    #Modelo terá as variaveis de alocacao 
+    model_2 = Model(HiGHS.Optimizer)
+    aloc_ESF = @variable(model_2, aloc_ESF[i in S_Equipes_ESF, j in S_Equipes_Emulti], Bin)
+    #aloc_ESB = @variable(model_2, aloc_ESB[i in S_Equipes_ESB, j in S_Equipes_Emulti], Bin)
+
+
+    #Restricoes
+    #Toda Equipe ESF e ESB tem que ser alocadas a uma equipe Emulti
+    @constraint(model_2, [i in S_Equipes_ESF], sum(aloc_ESF[i,j] for j in S_Equipes_Emulti) == 1)
+    #@constraint(model_2, [i in S_Equipes_ESB], sum(aloc_ESB[i,j] for j in S_Equipes_Emulti) == 1)
+
+    #Cada Emulti pode receber até 9 equipes
+    @constraint(model_2, [j in S_Equipes_Emulti], sum(aloc_ESF[i,j] for i in S_Equipes_ESF) <= 9)
+                                                #+ sum(aloc_ESB[i,j] for i in S_Equipes_ESB) )
+
+    #S_UBS_Emulti_reais, S_UBS_Emulti_criadas
+    #Funcao Objetivo - Minimizar a distancia total das equipes!
+    @expression(model_2, dist_ESF_Real_Emulti_Real,  sum(mt_emulti[S_UBS_ESF_reais[i], S_UBS_Emulti_reais[j]] * aloc_ESF[S_Equipes_ESF[i], S_Equipes_Emulti[j]] for i in 1:length(S_ESF_reais_abertas), j in 1:length(S_UBS_Emulti_reais)))
+    
+    
+    @expression(model_2, dist_ESF_Candidata_Emulti_Real, sum(mt_emulti[S_UBS_ESF_criadas[i], S_UBS_Emulti_reais[j]] * aloc_ESF[S_equipes_ESF_candidatas[i], S_Equipes_Emulti[j]] 
+                                                        for i in 1:length(S_ESF_criadas), j in 1:length(S_UBS_Emulti_reais)))
+    
+    
+    
+    #@expression(model_2, dist_ESB_Real_Emulti_Real,  sum(mt_emulti[S_UBS_ESB_reais[i], S_UBS_Emulti[j]] * aloc_ESB[S_Equipes_ESB[i], S_Equipes_Emulti[j]] 
+                #for i in 1:length(S_ESB_reais_abertas), j in 1:length(S_UBS_Emulti_reais)))
+    
+    
+    #@expression(model_2, dist_ESB_Candidata_Emulti_Real, sum(mt_emulti[S_UBS_ESB_criadas[i], S_UBS_Emulti[j]] * aloc_ESB[S_equipes_ESB_candidatas[i], S_Equipes_Emulti[j]] 
+                   # for i in 1:length(S_ESB_criadas), j in 1:length(S_UBS_Emulti_reais)))
+
+
+    @objective(model_2, Min, dist_ESF_Real_Emulti_Real + dist_ESF_Candidata_Emulti_Real) #+ dist_ESB_Real_Emulti_Real + dist_ESB_Candidata_Emulti_Real)
+    
+
+
+
+    return model_2, indices_aloc                                                
+    #set_optimizer_attribute(model_2, "primal_feasibility_tolerance", 1e-4)
+    #set_optimizer_attribute(model_2, "dual_feasibility_tolerance", 1e-4)
+    #set_optimizer_attribute(model_2, "time_limit", 300.0)
+    #set_optimizer_attribute(model_2, "mip_rel_gap", 0.05)
+    #optimize!(model_2)
+
+
 end

@@ -131,6 +131,19 @@ mutable struct ModelParameters
     ponderador_Vulnerabilidade::Float64
 end
 
+
+mutable struct Indices_modelo_alocacao_ESF_Emulti
+    UBS_ESF_alocada_real::Vector{Int64}
+    ESF_Reais_abertas::Vector{Int64}
+    UBS_EMulti_alocada_real::Vector{Int64}
+    EMulti_Reais_abertas::Vector{Int64}
+    UBS_ESF_alocada_candidata::Vector{Int64}
+    ESF_criadas::Vector{Int64}
+    UBS_Emulti_criadas::Vector{Int64}
+    Emulti_criadas::Vector{Int64}
+
+end
+
 # Funções de leitura de dados
 function load_healthcare_data(base_path::String)::HealthcareData
     return HealthcareData(

@@ -29,7 +29,7 @@ function example_usage()
     
     # Configurar parâmetros específicos do cenário
     println("Configurando parâmetros do cenário...")
-    parameters.orcamento_maximo = 5000000.0
+    parameters.orcamento_maximo = 10135000
     parameters.ponderador_Vulnerabilidade = 1
 
     println("Criando modelo de cobertura máxima")
@@ -46,9 +46,27 @@ function example_usage()
     
     # Verificar se a otimização foi bem-sucedida
     if termination_status(model) == MOI.OPTIMAL
-            # Mostrar total atendido por equipe (somando sobre todos os pontos de demanda e unidades)
-    # println("Total atendido por equipe:")
-    pop_atendida = value.(model[:pop_atendida])
+        println("Finalizou ...")
+        #Se modelo 1 finalizar rodada, gerar modelo que aloca Emulti nas ESF!
+        println("Criando Modelo Alocacao EsF nas Emultis ...")
+        model_emulti, indices_model_emulti = create_model_alocacao_Emulti_ESF(model, indices, parameters, mun_data)
+        
+        println("Otimizando modelo Emulti...")
+        set_optimizer_attribute(model, "primal_feasibility_tolerance", 1e-4)
+        set_optimizer_attribute(model, "dual_feasibility_tolerance", 1e-4)
+        set_optimizer_attribute(model, "time_limit", 300.0)
+        set_optimizer_attribute(model, "mip_rel_gap", 0.05)
+    
+        optimize!(model_emulti)
+
+        aloc_esf_emulti_df = nothing
+        if termination_status(model_emulti) == MOI.OPTIMAL
+            println("Modelo De alocacao Emulti Finalizado com sucesso")
+            println("Extraindo Resultados da Alocacao Emulti")
+            aloc_esf_emulti_df = extract_aloc_esf_emulti(model_emulti, indices_model_emulti, indices, mun_data)
+        end
+
+        pop_atendida = value.(model[:pop_atendida])
         for eq in [1,2]
             total_eq = 0.0
            for d in indices.S_Pontos_Demanda, n1 in indices.S_n1
@@ -81,7 +99,7 @@ function example_usage()
         cost_results = extract_cost_results(model)
         
        # Exportar para Excel
-        filename = "Resultados_COBERTURA_MAXIMA_23_END.xlsx"
+        filename = "Resultados_COBERTURA_MAXIMA_26_END.xlsx"
         df_results = export_population_results_to_excel(population_results, filename)
         
         # Adicionar dados do fluxo de equipes (novo formato) ao mesmo arquivo Excel
@@ -95,6 +113,10 @@ function example_usage()
         
         # Adicionar fluxo secundario e terciario()
         df_flow = add_flow_patientes_to_excel(fluxo_secundario_terciario, filename)
+        # Adicionar alocação ESF→Emulti
+        if aloc_esf_emulti_df !== nothing
+            df_aloc_esf_emulti = add_aloc_esf_emulti_to_excel(aloc_esf_emulti_df, filename)
+        end
         return model, results, population_results, team_flow_results, cost_results
     
     else
