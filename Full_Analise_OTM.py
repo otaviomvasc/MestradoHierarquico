@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import to_hex
 import plotly.express as px
 import ast
+from shapely import length
 from shapely.geometry import Polygon
 
 import matplotlib.pyplot as plt
@@ -22,7 +23,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-
+import re
 
 """
 classe que recebe dois arquivos excel
@@ -756,6 +757,9 @@ class AnaliseCenario:
         ].apply(str_to_polygon)
         print("LOGGING: READ DATA END")
 
+        self.dados_fluxo_emulti = pd.read_excel(path, sheet_name="Aloc_ESF_Emulti")
+        self.df_custos = pd.read_excel(path, sheet_name="Custos")
+
     def plota_mapa_basico_setores_censitarios(
         self, fundo_ivs: bool = True, fundo_cobertura: bool = False
     ):
@@ -1196,6 +1200,56 @@ class AnaliseCenario:
 
         return mapa_base, df_base
 
+    def plota_fluxo_Emulti(self):
+        # TODO: Parece que estou com indices errados, ja que estou alocando EMulti em unidades que nao estao abertas. Revisar!
+
+        basic_map, resultado_choropleth = self.plota_mapa_basico_setores_censitarios(
+            fundo_ivs=False, fundo_cobertura=True
+        )
+
+        df = self.dados_fluxo_emulti.copy()
+
+        for idx, row in df.iterrows():
+            # ponto de origem ESF
+            folium.CircleMarker(
+                location=[row["lat_origem_esf"], row["long_origem_esf"]],
+                radius=1.5,
+                # popup=f"Cnes{})",
+                color="yellow",
+                fillColor="yellow",
+                fillOpacity=0.8,
+                weight=2,
+            ).add_to(basic_map)
+
+            # ponto de Destino Emulti
+            folium.CircleMarker(
+                location=[row["lat_emulti"], row["long_emulti"]],
+                radius=1.5,
+                popup=f"Cnes Emulti {row["cnes_eq_emulti"]})",
+                color="black",
+                fillColor="black",
+                fillOpacity=0.8,
+                weight=2,
+            ).add_to(basic_map)
+
+            coords_origem = [row["lat_origem_esf"], row["long_origem_esf"]]
+            coords_destino = [row["lat_emulti"], row["long_emulti"]]
+
+            folium.PolyLine(
+                locations=[coords_origem, coords_destino],
+                color="black",
+                weight=2,
+                opacity=0.6,
+                # popup=f"{config['nome']}<br>"
+                # f"Fluxo de Pacientes: {row['Fluxo_pacientes']}<br>"
+                # f"Origem: {coords_origem}<br>"
+                # f"Destino: {coords_destino}",
+                # tooltip=f"{config['nome']}: {row['Fluxo_pacientes']} pacientes",
+            ).add_to(basic_map)
+
+        # basic_map.save("map_fluxo_Emulti_2.html")
+        return basic_map
+
     def plota_fluxo_equipes(self):
         print("LOGGING: INICIANDO PLOTAGEM DE FLUXOS DE EQUIPES")
 
@@ -1606,13 +1660,90 @@ class AnaliseCenario:
         # 2 - Quantos setores censitarios com maior IVS foram cobertos ? Ex: dos 20 mais criticos, cobri 18, entre 20 - 40, cobri 20, etc, etc.
         # 3 - Plotar analise dos custos!
 
+    def plota_acessibilidade_geografica_cenario(self):
+
+        df = pd.DataFrame(
+            {
+                "dist": self.df_cobertura_equipes.Distancia.to_list(),
+                "pop": self.df_cobertura_equipes.Populacao_Atendida_ESF.to_list(),
+            }
+        ).dropna()
+
+        # Definindo os bins de 0.5 em 0.5 km, cobrindo o range dos dados
+        min_dist = df["dist"].min()
+        max_dist = df["dist"].max()
+        bin_edges = list(
+            np.arange(
+                0,
+                max_dist + 0.5,
+                0.5,
+            )
+        )
+        fig = px.histogram(
+            df,
+            x="dist",
+            y="pop",  # pesos
+            histfunc="sum",  # soma as populações em cada bin
+            labels={"dist": "Distância (km)", "pop": "População atendida"},
+            title="Distribuição ponderada da população por distância (ESF)",
+            category_orders={"dist": bin_edges},
+            nbins=len(bin_edges) - 1,
+        )
+        fig.update_traces(xbins=dict(start=bin_edges[0], end=bin_edges[-1], size=0.5))
+        fig.update_layout(bargap=0.05)
+
+        # fig.write_html("dist_distancia_cenario.html")
+        return fig
+
 
 class AnaliseBaselineMapaSus:
     def __init__(self, path_data_sus) -> None:
         self.format_baseline_data(path_data_sus)
 
     def format_baseline_data(self, path_data_sus):
+        def str_to_float_list_loose(s: str) -> list[float]:
+            nums = re.findall(
+                r"-?\d+(?:\.\d+)?", s
+            )  # encontra ints e floats (com sinal)
+            return [float(x) for x in nums]
+
+        def calcula_populacao_atendida_real(vetor_pop):
+            pop_atendida = []
+            for i in range(len(vetor_pop)):
+                if i == 0:
+                    pop_atendida.append(vetor_pop[i])
+                else:
+                    pop_atendida.append(vetor_pop[i] - vetor_pop[i - 1])
+            return pop_atendida
+
         self.df_baseline = pd.read_excel(path_data_sus, sheet_name="df_merge_aux")
+        self.df_baseline["qntd_alocada_por_nivel_dist_eSF"] = self.df_baseline[
+            "qntd_alocada_por_nivel_dist_eSF"
+        ].map(str_to_float_list_loose)
+
+        self.df_baseline["qntd_alocada_por_nivel_dist_eSB"] = self.df_baseline[
+            "qntd_alocada_por_nivel_dist_eSB"
+        ].map(str_to_float_list_loose)
+
+        self.df_baseline["Distancia_eSF"] = self.df_baseline["Distancia_eSF"].map(
+            str_to_float_list_loose
+        )
+
+        self.df_baseline["Distancia_eSB"] = self.df_baseline["Distancia_eSB"].map(
+            str_to_float_list_loose
+        )
+
+        self.df_baseline["pop_atendida_por_distancia_eSF"] = (
+            self.df_baseline.qntd_alocada_por_nivel_dist_eSF.apply(
+                lambda x: calcula_populacao_atendida_real(x)
+            )
+        )
+        self.df_baseline["pop_atendida_por_distancia_eSB"] = (
+            self.df_baseline.qntd_alocada_por_nivel_dist_eSB.apply(
+                lambda x: calcula_populacao_atendida_real(x)
+            )
+        )
+
         self.df_equipes_bruto = pd.read_excel(path_data_sus, sheet_name="unidades_full")
         self.df_baseline["id_setor"] = self.df_baseline["id_setor"].astype(int)
 
@@ -1642,8 +1773,65 @@ class AnaliseBaselineMapaSus:
         self.custo_fixo_real = (
             self.custos_mensais["Custo Fixo Mensal"] * df_an.NO_FANTASIA.nunique()
         )
-        self.custo_toal = self.custo_equipes_real + self.custo_fixo_real
-        print(f"Custo Total Real: {self.custo_toal}")
+        self.custo_total = self.custo_equipes_real + self.custo_fixo_real
+        self.custo_equipes_real = df_agg.copy()
+        print(f"Custo Total Real: {self.custo_total}")
+
+    def plota_acessibilidade_geografica(self):
+        df = self.df_baseline.copy()
+        cols = (
+            "pop_atendida_por_distancia_eSF",
+            "pop_atendida_por_distancia_eSB",
+            "Distancia_eSF",
+            "Distancia_eSB",
+        )
+        df_aux = df[
+            [
+                "pop_atendida_por_distancia_eSF",
+                "pop_atendida_por_distancia_eSB",
+                "Distancia_eSF",
+                "Distancia_eSB",
+            ]
+        ].copy()
+        distancias_ESF = list()
+        populacao_ESF = list()
+        distancias_ESB = list()
+        populacao_ESB = list()
+
+        for _, row in df_aux.iterrows():
+            distancias_ESF.extend(row.Distancia_eSF)
+            populacao_ESF.extend(row.pop_atendida_por_distancia_eSF)
+            distancias_ESB.extend(row.Distancia_eSB)
+            populacao_ESB.extend(row.pop_atendida_por_distancia_eSB)
+
+        df = pd.DataFrame({"dist": distancias_ESF, "pop": populacao_ESF}).dropna()
+
+        # Definindo os bins de 0.5 em 0.5 km, cobrindo o range dos dados
+        min_dist = df["dist"].min()
+        max_dist = df["dist"].max()
+        bin_edges = list(
+            np.arange(
+                0,
+                max_dist + 0.5,
+                0.5,
+            )
+        )
+        fig = px.histogram(
+            df,
+            x="dist",
+            y="pop",  # pesos
+            histfunc="sum",  # soma as populações em cada bin
+            labels={"dist": "Distância (km)", "pop": "População atendida"},
+            title="Distribuição ponderada da população por distância (ESF)",
+            category_orders={"dist": bin_edges},
+            nbins=len(bin_edges) - 1,
+        )
+        fig.update_traces(xbins=dict(start=bin_edges[0], end=bin_edges[-1], size=0.5))
+        fig.update_layout(bargap=0.05)
+        df[df.dist > 1.5]["pop"].sum()
+        # fig.write_html("dist_distancia.html")
+        return fig
+        # fig.write_image("comparacao_cobertura.png", width=1400, height=1200)
 
 
 class ComparaResultadoBaseline:
@@ -1661,9 +1849,15 @@ class ComparaResultadoBaseline:
         # cols_compare_ESF = 'pop_captada_eSF', 'Populacao_Atendida_ESF'
         # cols_compare_ESB = 'pop_captada_eSB',  'Populacao_Atendida_ESB'
 
-    def analises(self, tamanho_faixa=50):
-        # Analises descritivas de quantidades de equipes reais x criadas
+    def plota_comparativo_acessibilidade(self):
+        fig_cenario = self.cenario.plota_acessibilidade_geografica_cenario()
+        fig_baseline = self.baseline.plota_acessibilidade_geografica()
+        # fig_cenario = self.plota_acessibilidade_geografica_cenario
 
+    def analises(self, tamanho_faixa=50):
+        self.plota_comparativo_acessibilidade()
+        # Analises descritivas de quantidades de equipes reais x criadas
+        self.analises_descritivas()
         # Analise de custo - Diferenca entre baseline e modelo
 
         figura, dados = self.analisa_cobertura_comparativa_por_ivs_2(
@@ -1674,6 +1868,567 @@ class ComparaResultadoBaseline:
         figura.write_image("comparacao_cobertura.png", width=1400, height=1200)
 
         # Proximas analises = Dados de custo e quantitativo de equipes real x criadas!
+
+    def analises_descritivas(self):
+        # populacao total atendida por Esf, EsB,
+        # Populacao_Atendida_ESF, Populacao_Atendida_ESB
+        # populacao_ajustada_eSF, populacao_ajustada_eSB,
+        populacao_total = self.df_merge.Populacao_Total.sum()
+        modelo_ESF = self.df_merge.Populacao_Atendida_ESF.sum()
+        modelo_ESB = self.df_merge.Populacao_Atendida_ESB.sum()
+        real_ESF = self.df_merge.pop_captada_eSF.sum()
+        real_ESB = self.df_merge.pop_captada_eSB.sum()
+
+        total_modelo = modelo_ESF + modelo_ESB
+        total_real = real_ESF + real_ESB
+
+        # Analise de custos!
+        custos_equipe_real = self.baseline.custo_equipes_real
+        custos_equipe_modelo = self.cenario.df_custos
+
+        import pandas as pd
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+
+        # ============================================================================================================
+        # FORMATAÇÃO DO DATAFRAME DE CUSTOS DO MODELO
+        # ============================================================================================================
+
+        # Assumindo que seu dataframe se chama df_custos_modelo
+
+        # 1. Custos detalhados por tipo de equipe (para gráfico empilhado)
+        df_por_equipe = custos_equipe_modelo[
+            custos_equipe_modelo["Nivel"].isin(["ESF", "ESB", "ENASF"])
+        ].copy()
+        df_por_equipe = df_por_equipe[["Tipo_Custo", "Nivel", "Valor_R", "Percentual"]]
+        df_por_equipe["Valor_Milhoes"] = df_por_equipe["Valor_R"] / 1e6
+
+        # Transformar para formato wide (para gráfico empilhado)
+        df_equipe_pivot = df_por_equipe.pivot(
+            index="Tipo_Custo", columns="Nivel", values="Valor_Milhoes"
+        )
+
+        # 2. Totais por categoria (ESF, ESB, ENASF, Infraestrutura)
+        df_totais_categoria = custos_equipe_modelo[
+            custos_equipe_modelo["Nivel"] == "Total por Equipe"
+        ].copy()
+        df_infraestrutura = custos_equipe_modelo[
+            custos_equipe_modelo["Nivel"] == "Total por Categoria"
+        ].copy()
+        df_totais = pd.concat([df_totais_categoria, df_infraestrutura])
+        df_totais = df_totais[["Tipo_Custo", "Valor_R", "Percentual"]].reset_index(
+            drop=True
+        )
+        df_totais["Valor_Milhoes"] = df_totais["Valor_R"] / 1e6
+
+        # 3. Totais por tipo de custo (Contratação, Realocação, Operação)
+        df_por_tipo = custos_equipe_modelo[
+            custos_equipe_modelo["Nivel"] == "Total por Tipo"
+        ].copy()
+        df_por_tipo = df_por_tipo[["Tipo_Custo", "Valor_R", "Percentual"]].reset_index(
+            drop=True
+        )
+        df_por_tipo["Valor_Milhoes"] = df_por_tipo["Valor_R"] / 1e6
+
+        # ============================================================================================================
+        # FORMATAÇÃO DO DATAFRAME DE CUSTOS REAIS POR EQUIPE
+        # ============================================================================================================
+
+        # Assumindo que seu dataframe se chama df_custos_reais
+        df_custos_reais_formatado = self.baseline.custo_equipes_real.copy()
+
+        # Renomear colunas para padronização
+        df_custos_reais_formatado.columns = [
+            "DS_EQUIPE",
+            "Qntd_Equipes",
+            "Custo_Mensal",
+        ]
+        df_custos_reais_formatado["Custo_Anual"] = (
+            df_custos_reais_formatado["Custo_Mensal"] * 12
+        )
+        df_custos_reais_formatado["Custo_Anual_Milhoes"] = (
+            df_custos_reais_formatado["Custo_Anual"] / 1e6
+        )
+        df_custos_reais_formatado["Custo_Mensal_Milhoes"] = (
+            df_custos_reais_formatado["Custo_Mensal"] / 1e6
+        )
+
+        # Calcular percentuais
+        total_mensal = df_custos_reais_formatado["Custo_Mensal"].sum()
+        df_custos_reais_formatado["Percentual"] = (
+            df_custos_reais_formatado["Custo_Mensal"] / total_mensal * 100
+        ).round(2)
+
+        # ============================================================================================================
+        # GRÁFICOS PRONTOS PARA USO
+        # ============================================================================================================
+        fig = make_subplots(
+            rows=3,
+            cols=2,
+            subplot_titles=(
+                "Custos por Tipo de Equipe (Empilhado)",
+                "Custos Totais por Categoria",
+                "Custos por Tipo de Despesa",
+                "Custos Operacionais Reais (Mensal)",
+                "Distribuição Percentual dos Custos",
+                "Resumo: Custo Total do Sistema",
+            ),
+            specs=[
+                [{"type": "bar"}, {"type": "bar"}],
+                [{"type": "bar"}, {"type": "bar"}],
+                [{"type": "pie"}, {"type": "bar"}],
+            ],
+            vertical_spacing=0.12,
+            horizontal_spacing=0.10,
+        )
+
+        # Cores padronizadas
+        cores = {"ESF": "#1f77b4", "ESB": "#ff7f0e", "ENASF": "#2ca02c"}
+
+        # ============================================================================================================
+        # SUBPLOT 1: Custos por tipo de equipe (empilhado)
+        # ============================================================================================================
+
+        for equipe in ["ESF", "ESB", "ENASF"]:
+            df_temp = df_por_equipe[df_por_equipe["Nivel"] == equipe]
+            fig.add_trace(
+                go.Bar(
+                    x=df_temp["Tipo_Custo"],
+                    y=df_temp["Valor_Milhoes"],
+                    name=equipe,
+                    marker_color=cores[equipe],
+                    text=df_temp["Percentual"].apply(lambda x: f"{x:.1f}%"),
+                    textposition="inside",
+                    legendgroup="equipe",
+                    showlegend=True,
+                ),
+                row=1,
+                col=1,
+            )
+
+        # ============================================================================================================
+        # SUBPLOT 2: Custos totais por categoria
+        # ============================================================================================================
+
+        fig.add_trace(
+            go.Bar(
+                x=df_totais["Tipo_Custo"],
+                y=df_totais["Valor_Milhoes"],
+                marker_color="steelblue",
+                text=df_totais.apply(
+                    lambda row: f"R$ {row['Valor_Milhoes']:.2f}M<br>({row['Percentual']:.1f}%)",
+                    axis=1,
+                ),
+                textposition="outside",
+                showlegend=False,
+            ),
+            row=1,
+            col=2,
+        )
+
+        # ============================================================================================================
+        # SUBPLOT 3: Custos por tipo de despesa
+        # ============================================================================================================
+
+        fig.add_trace(
+            go.Bar(
+                x=df_por_tipo["Tipo_Custo"],
+                y=df_por_tipo["Valor_Milhoes"],
+                marker_color=["#66c2a5", "#fc8d62", "#8da0cb"],
+                text=df_por_tipo.apply(
+                    lambda row: f"R$ {row['Valor_Milhoes']:.2f}M<br>({row['Percentual']:.1f}%)",
+                    axis=1,
+                ),
+                textposition="outside",
+                showlegend=False,
+            ),
+            row=2,
+            col=1,
+        )
+
+        # ============================================================================================================
+        # SUBPLOT 4: Custos reais operacionais
+        # ============================================================================================================
+
+        fig.add_trace(
+            go.Bar(
+                x=df_custos_reais_formatado["DS_EQUIPE"],
+                y=df_custos_reais_formatado["Custo_Mensal_Milhoes"],
+                marker_color=[
+                    cores.get(x.split("-")[0].strip(), "gray")
+                    for x in df_custos_reais_formatado["DS_EQUIPE"]
+                ],
+                text=df_custos_reais_formatado.apply(
+                    lambda row: f"{int(row['Qntd_Equipes'])} eq.<br>R$ {row['Custo_Mensal_Milhoes']:.2f}M<br>({row['Percentual']:.1f}%)",
+                    axis=1,
+                ),
+                textposition="outside",
+                showlegend=False,
+            ),
+            row=2,
+            col=2,
+        )
+
+        # ============================================================================================================
+        # SUBPLOT 5: Pizza - Distribuição percentual
+        # ============================================================================================================
+
+        fig.add_trace(
+            go.Pie(
+                labels=df_totais["Tipo_Custo"],
+                values=df_totais["Valor_Milhoes"],
+                hole=0.4,
+                marker=dict(colors=["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728"]),
+                textinfo="label+percent",
+                textposition="outside",
+                showlegend=False,
+            ),
+            row=3,
+            col=1,
+        )
+
+        # ============================================================================================================
+        # SUBPLOT 6: Resumo - Custo total
+        # ============================================================================================================
+
+        df_resumo = custos_equipe_modelo[
+            custos_equipe_modelo["Tipo_Custo"] == "CUSTO TOTAL"
+        ].copy()
+        custo_total = df_resumo["Valor_R"].values[0] / 1e6
+
+        # Breakdown dos principais componentes
+        componentes = [
+            "Total Contratação",
+            "Total Realocação",
+            "Total Operação",
+            "Total Infraestrutura",
+        ]
+        df_breakdown = custos_equipe_modelo[
+            custos_equipe_modelo["Tipo_Custo"].isin(componentes)
+        ].copy()
+        df_breakdown["Valor_Milhoes"] = df_breakdown["Valor_R"] / 1e6
+
+        fig.add_trace(
+            go.Bar(
+                x=df_breakdown["Tipo_Custo"].str.replace("Total ", ""),
+                y=df_breakdown["Valor_Milhoes"],
+                marker_color=["#e74c3c", "#f39c12", "#3498db", "#95a5a6"],
+                text=df_breakdown["Percentual"].apply(lambda x: f"{x:.1f}%"),
+                textposition="outside",
+                showlegend=False,
+            ),
+            row=3,
+            col=2,
+        )
+
+        # ============================================================================================================
+        # FORMATAÇÃO GLOBAL
+        # ============================================================================================================
+
+        fig.update_xaxes(tickangle=-45, showgrid=False)
+        fig.update_yaxes(
+            title_text="Valor (Milhões R$)", showgrid=True, gridcolor="lightgray"
+        )
+
+        fig.update_layout(
+            height=1400,
+            width=1600,
+            title_text=f"<b>Análise de Custos do Sistema de Saúde - Custo Total: R$ {custo_total:.2f} Milhões</b>",
+            title_x=0.5,
+            title_font_size=20,
+            showlegend=True,
+            legend=dict(
+                orientation="h",
+                yanchor="top",
+                y=1.02,
+                xanchor="center",
+                x=0.25,
+                title="Tipo de Equipe",
+            ),
+            plot_bgcolor="white",
+            paper_bgcolor="white",
+            font=dict(family="Arial, sans-serif", size=10, color="black"),
+            barmode="stack",  # Para o gráfico empilhado
+        )
+
+        # Atualizar grid para todos os eixos
+        fig.update_xaxes(showline=True, linewidth=1, linecolor="lightgray", mirror=True)
+        fig.update_yaxes(showline=True, linewidth=1, linecolor="lightgray", mirror=True)
+
+        fig.show()
+        fig.write_html("analise_custos_completa.html")
+        # Salvar (opcional)
+        # fig.write_html("analise_custos_completa.html")
+        fig.write_image("analise_custos_completa.png", width=1600, height=1400, scale=2)
+        # populacao ponderada por IVS coberta por Esf, Esb,
+        # Total coberto
+        # Porcentagem
+        #
+
+        ### COMPARACAO COM REAL####
+        # Preparar dados para comparação Modelo vs Real
+        df_modelo_operacional = custos_equipe_modelo[
+            custos_equipe_modelo["Tipo_Custo"].isin(
+                ["Operação ESF", "Operação ESB", "Operação ENASF"]
+            )
+        ].copy()
+        df_modelo_operacional["Valor_Milhoes"] = df_modelo_operacional["Valor_R"] / 1e6
+        df_modelo_operacional["Tipo_Equipe"] = df_modelo_operacional[
+            "Tipo_Custo"
+        ].str.replace("Operação ", "")
+
+        # Preparar custos reais
+        df_real_comp = df_custos_reais_formatado.copy()
+        df_real_comp["Tipo_Equipe"] = (
+            df_real_comp["DS_EQUIPE"].str.split("-").str[0].str.strip()
+        )
+
+        # Criar dataframe de comparação
+        comparacao_data = []
+        for equipe in ["ESF", "ESB", "ENASF"]:
+            custo_modelo = df_modelo_operacional[
+                df_modelo_operacional["Tipo_Equipe"] == equipe
+            ]["Valor_Milhoes"].values
+            custo_modelo = custo_modelo[0] if len(custo_modelo) > 0 else 0
+
+            custo_real = df_real_comp[df_real_comp["Tipo_Equipe"] == equipe][
+                "Custo_Mensal_Milhoes"
+            ].values
+            custo_real = custo_real[0] if len(custo_real) > 0 else 0
+
+            comparacao_data.append(
+                {
+                    "Tipo_Equipe": equipe,
+                    "Custo_Modelo": custo_modelo,
+                    "Custo_Real": custo_real,
+                    "Diferenca": custo_modelo - custo_real,
+                    "Diferenca_Percentual": (
+                        ((custo_modelo - custo_real) / custo_real * 100)
+                        if custo_real > 0
+                        else 0
+                    ),
+                }
+            )
+
+        df_comparacao = pd.DataFrame(comparacao_data)
+
+        # ============================================================================================================
+        # CRIAR FIGURE COM SUBPLOTS
+        # ============================================================================================================
+
+        fig = make_subplots(
+            rows=3,
+            cols=2,
+            subplot_titles=(
+                "Custos Operacionais: Modelo vs Real (Mensal)",
+                "Diferença entre Modelo e Real",
+                "Custos Totais por Categoria (Modelo)",
+                "Custos por Tipo de Despesa (Modelo)",
+                "Distribuição Percentual dos Custos",
+                "Resumo: Breakdown do Custo Total",
+            ),
+            specs=[
+                [{"type": "bar"}, {"type": "bar"}],
+                [{"type": "bar"}, {"type": "bar"}],
+                [{"type": "pie"}, {"type": "bar"}],
+            ],
+            vertical_spacing=0.12,
+            horizontal_spacing=0.10,
+        )
+
+        cores = {"ESF": "#1f77b4", "ESB": "#ff7f0e", "ENASF": "#2ca02c"}
+
+        # ============================================================================================================
+        # SUBPLOT 1: Comparação Modelo vs Real (barras agrupadas)
+        # ============================================================================================================
+
+        fig.add_trace(
+            go.Bar(
+                x=df_comparacao["Tipo_Equipe"],
+                y=df_comparacao["Custo_Modelo"],
+                name="Custo Modelo",
+                marker_color="#3498db",
+                text=df_comparacao["Custo_Modelo"].apply(lambda x: f"R$ {x:.2f}M"),
+                textposition="outside",
+                legendgroup="comparacao",
+                showlegend=True,
+            ),
+            row=1,
+            col=1,
+        )
+
+        fig.add_trace(
+            go.Bar(
+                x=df_comparacao["Tipo_Equipe"],
+                y=df_comparacao["Custo_Real"],
+                name="Custo Real",
+                marker_color="#e74c3c",
+                text=df_comparacao["Custo_Real"].apply(lambda x: f"R$ {x:.2f}M"),
+                textposition="outside",
+                legendgroup="comparacao",
+                showlegend=True,
+            ),
+            row=1,
+            col=1,
+        )
+
+        # ============================================================================================================
+        # SUBPLOT 2: Diferença entre Modelo e Real
+        # ============================================================================================================
+
+        cores_diff = [
+            "#27ae60" if x >= 0 else "#e74c3c" for x in df_comparacao["Diferenca"]
+        ]
+
+        fig.add_trace(
+            go.Bar(
+                x=df_comparacao["Tipo_Equipe"],
+                y=df_comparacao["Diferenca"],
+                marker_color=cores_diff,
+                text=df_comparacao.apply(
+                    lambda row: f"R$ {row['Diferenca']:.2f}M<br>({row['Diferenca_Percentual']:+.1f}%)",
+                    axis=1,
+                ),
+                textposition="outside",
+                showlegend=False,
+            ),
+            row=1,
+            col=2,
+        )
+
+        # Adicionar linha zero
+        fig.add_hline(y=0, line_dash="dash", line_color="gray", row=1, col=2)
+
+        # ============================================================================================================
+        # SUBPLOT 3: Custos totais por categoria
+        # ============================================================================================================
+
+        fig.add_trace(
+            go.Bar(
+                x=df_totais["Tipo_Custo"],
+                y=df_totais["Valor_Milhoes"],
+                marker_color="steelblue",
+                text=df_totais.apply(
+                    lambda row: f"R$ {row['Valor_Milhoes']:.2f}M<br>({row['Percentual']:.1f}%)",
+                    axis=1,
+                ),
+                textposition="outside",
+                showlegend=False,
+            ),
+            row=2,
+            col=1,
+        )
+
+        # ============================================================================================================
+        # SUBPLOT 4: Custos por tipo de despesa
+        # ============================================================================================================
+
+        fig.add_trace(
+            go.Bar(
+                x=df_por_tipo["Tipo_Custo"],
+                y=df_por_tipo["Valor_Milhoes"],
+                marker_color=["#66c2a5", "#fc8d62", "#8da0cb"],
+                text=df_por_tipo.apply(
+                    lambda row: f"R$ {row['Valor_Milhoes']:.2f}M<br>({row['Percentual']:.1f}%)",
+                    axis=1,
+                ),
+                textposition="outside",
+                showlegend=False,
+            ),
+            row=2,
+            col=2,
+        )
+
+        # ============================================================================================================
+        # SUBPLOT 5: Pizza - Distribuição percentual
+        # ============================================================================================================
+
+        fig.add_trace(
+            go.Pie(
+                labels=df_totais["Tipo_Custo"],
+                values=df_totais["Valor_Milhoes"],
+                hole=0.4,
+                marker=dict(colors=["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728"]),
+                textinfo="label+percent",
+                textposition="outside",
+                showlegend=False,
+            ),
+            row=3,
+            col=1,
+        )
+
+        # ============================================================================================================
+        # SUBPLOT 6: Breakdown do custo total
+        # ============================================================================================================
+        custos_equipe_real = self.baseline.custo_equipes_real
+        custos_equipe_modelo = self.cenario.df_custos
+
+        componentes = [
+            "Total Contratação",
+            "Total Realocação",
+            "Total Operação",
+            "Total Infraestrutura",
+        ]
+        df_breakdown = custos_equipe_modelo[
+            custos_equipe_modelo["Tipo_Custo"].isin(componentes)
+        ].copy()
+        df_breakdown["Valor_Milhoes"] = df_breakdown["Valor_R"] / 1e6
+
+        fig.add_trace(
+            go.Bar(
+                x=df_breakdown["Tipo_Custo"].str.replace("Total ", ""),
+                y=df_breakdown["Valor_Milhoes"],
+                marker_color=["#e74c3c", "#f39c12", "#3498db", "#95a5a6"],
+                text=df_breakdown["Percentual"].apply(lambda x: f"{x:.1f}%"),
+                textposition="outside",
+                showlegend=False,
+            ),
+            row=3,
+            col=2,
+        )
+
+        # ============================================================================================================
+        # FORMATAÇÃO GLOBAL
+        # ============================================================================================================
+
+        df_resumo = custos_equipe_modelo[
+            custos_equipe_modelo["Tipo_Custo"] == "CUSTO TOTAL"
+        ].copy()
+        custo_total = df_resumo["Valor_R"].values[0] / 1e6
+
+        fig.update_xaxes(tickangle=-45, showgrid=False)
+        fig.update_yaxes(
+            title_text="Valor (Milhões R$)", showgrid=True, gridcolor="lightgray"
+        )
+
+        # Ajustar título do eixo Y no subplot 2 (diferença)
+        fig.update_yaxes(title_text="Diferença (Milhões R$)", row=1, col=2)
+
+        fig.update_layout(
+            height=1400,
+            width=1600,
+            title_text=f"<b>Análise Comparativa de Custos - Modelo vs Real | Custo Total Modelo: R$ {custo_total:.2f} Milhões</b>",
+            title_x=0.5,
+            title_font_size=18,
+            showlegend=True,
+            legend=dict(
+                orientation="h", yanchor="top", y=1.02, xanchor="center", x=0.25
+            ),
+            plot_bgcolor="white",
+            paper_bgcolor="white",
+            font=dict(family="Arial, sans-serif", size=10, color="black"),
+            barmode="group",
+        )
+
+        fig.update_xaxes(showline=True, linewidth=1, linecolor="lightgray", mirror=True)
+        fig.update_yaxes(showline=True, linewidth=1, linecolor="lightgray", mirror=True)
+
+        fig.show()
+
+        # Imprimir resumo da comparação
+        print("\n=== RESUMO DA COMPARAÇÃO MODELO vs REAL ===")
+        print(df_comparacao.to_string(index=False))
+        print(f"\nDiferença Total: R$ {df_comparacao['Diferenca'].sum():.2f} Milhões")
 
     def analisa_cobertura_comparativa_por_ivs_2(self, tamanho_faixa=20):
 
@@ -1972,14 +2727,18 @@ class ComparaResultadoBaseline:
 
         return fig, {"ESF": df_resultados_esf, "ESB": df_resultados_esb}
 
+    def compara_fluxo_emulti(self):
+        b = 0
+
 
 def main():
-    path_cenario = r"C:\Users\marce\OneDrive\Área de Trabalho\MestradoHierarquico\Resultados_COBERTURA_MAXIMA_31_END.xlsx"
-    path_baseline = r"C:\Users\marce\OneDrive\Área de Trabalho\MestradoHierarquico\resultados_Baseline_DataSus_Cobertura_por_equipes.xlsx"
-    # comparador_cenario = ComparaResultadoBaseline(
-    # path_cenario=path_cenario, path_baseline=path_baseline
-    # )
-    # comparador_cenario.analises(tamanho_faixa=50)
+    path_cenario = r"C:\Users\marce\OneDrive\Área de Trabalho\MestradoHierarquico\Resultados_COBERTURA_MAXIMA_34_END.xlsx"
+    path_baseline = r"C:\Users\marce\OneDrive\Área de Trabalho\MestradoHierarquico\resultados_Baseline_DataSus_Cobertura_por_equipes_v2.xlsx"
+    comparador_cenario = ComparaResultadoBaseline(
+        path_cenario=path_cenario, path_baseline=path_baseline
+    )
+    comparador_cenario.analises(tamanho_faixa=50)
+    # comparador_cenario.fluxo_emulti()
 
     # Salvar gráfico
     # figura.savefig("comparacao_cobertura_esf_esb.png", dpi=300, bbox_inches="tight")
@@ -1991,8 +2750,11 @@ def main():
 
     analise_cen = AnaliseCenario(path_cenario=path_cenario)
     # map, _ = analise_cen.plota_fluxo_pacientes(fundo_ivs=False)
-    map, _ = analise_cen.plota_fluxo_pacientes_secundario_terciario()
-    # map, _ = analise_cen.plota_fluxo_equipes()
+    # basic_map.save("map_fluxo_Emulti_2.html")
+    map_emulti = analise_cen.plota_fluxo_Emulti()
+    map_fluxo_pacientes, _ = analise_cen.plota_fluxo_pacientes_secundario_terciario()
+
+    # map.save("map_fluxo_pacientes_10.html")
     # analise_cen.analise_descritiva_cenario()
 
 

@@ -26,6 +26,7 @@ struct PopulationResults
     ivs::Float64
     cnes::Int
     nome_fantasia::String
+    distancia::Float64
 end
 
 # Estrutura para armazenar resultados do fluxo de equipes
@@ -171,7 +172,6 @@ function extract_population_results(model::Model, indices::ModelIndices, mun_dat
     aloc_values = value.(model[:Aloc_])
     
     results = PopulationResults[]
-    
     # Para cada ponto de demanda
     for d in indices.S_Pontos_Demanda
         # População total do ponto de demanda
@@ -232,6 +232,7 @@ function extract_population_results(model::Model, indices::ModelIndices, mun_dat
                 coord_ubs_lon = ubs_row.longitude
                 cnes = ubs_row.cnes
                 nome_fantasia = ubs_row.nome_fantasia
+                distancia = parameters.S_Matriz_Dist.Matriz_Dist_n1[d, ubs_alocada]
             else
                 # É uma UBS candidata (localizada no ponto de demanda)
                 candidata_idx = ubs_alocada - length(mun_data.unidades_n1.cnes)
@@ -240,6 +241,7 @@ function extract_population_results(model::Model, indices::ModelIndices, mun_dat
                     coord_ubs_lon = mun_data.coordenadas[candidata_idx][2]
                     cnes = 000000
                     nome_fantasia = "Unidade_Candidata_Aberta"
+                    distancia = parameters.S_Matriz_Dist.Matriz_Dist_n1[d, candidata_idx]
                 end
             end
         else
@@ -247,6 +249,7 @@ function extract_population_results(model::Model, indices::ModelIndices, mun_dat
             coord_ubs_lon = 0.0
             cnes = 99999999
             nome_fantasia = "Nao alocado"
+            distancia = 0.0
         end
         
         # Criar resultado para este ponto de demanda
@@ -264,7 +267,8 @@ function extract_population_results(model::Model, indices::ModelIndices, mun_dat
             coord_ubs_lon,
             ivs,
             cnes,
-            nome_fantasia               # coord_ubs_lon
+            nome_fantasia, # coord_ubs_lon
+            distancia               
         )
         
         push!(results, result)
@@ -296,7 +300,8 @@ function export_population_results_to_excel(population_results::Vector{Populatio
         "Lon_UBS" => [r.coord_ubs_lon for r in population_results], 
         "IVS" => [r.ivs for r in population_results],
         "Cnes_Destino" => [r.cnes for r in population_results],
-        "Nome_Fantasia_Destino" => [r.nome_fantasia for r in population_results]
+        "Nome_Fantasia_Destino" => [r.nome_fantasia for r in population_results],
+        "Distancia" => [r.distancia for r in population_results]
     )
     
     # Adicionar coluna de percentual de atendimento
@@ -733,7 +738,7 @@ function extract_aloc_esf_emulti(model_emulti::Model, indices_model_emulti::Indi
                 #Qual UBS a equipe está alocada ?
                 #Equipes reais
                 ubs_alocada = indices_model_emulti.UBS_ESF_alocada_real[i] #QUal UBS a equipe i esta alocada ?
-                
+                mun_data.unidades_n1.cnes[27]
                 #Essa ubs é real ou é criada ?
                 if ubs_alocada <= length(mun_data.unidades_n1.cnes)
                     #Real!
@@ -1757,6 +1762,13 @@ function create_optimization_model_maximal_coverage_fluxo_equipes(indices::Model
     @constraint(model, [n1 in S_instalacoes_reais_n1], Abr_n1[n1] == 1)
 
 
+    
+    # ============================================================================================================
+    # Restricao EXTRA PARA TESTE DE MANTER UNIDADES ABERTAS!!!!
+    # ============================================================================================================
+
+    #Unidades reais precisam se manter funcionando, logo tem que ter pelo menos uma equipe lá atuando!
+    @constraint(model, [n1 in S_instalacoes_reais_n1], sum(eq_ESF_n1[eq, n1] for eq in S_Equipes_ESF) + eq_ESF_criadas[n1] >= 1)
 
 
     # ============================================================================================================
