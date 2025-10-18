@@ -9,7 +9,18 @@
             "type": "debugpy",
             "request": "launch",
             "program": "${file}",
-            "console": "integratedTerminal"
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "justMyCode": true
+        },
+        {
+            "name": "Python Debugger: Full_Analise_OTM.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/Full_Analise_OTM.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "justMyCode": true
         }
     ]
 }

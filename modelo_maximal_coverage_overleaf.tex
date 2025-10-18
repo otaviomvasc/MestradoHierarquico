@@ -1,0 +1,200 @@
+\documentclass{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{geometry}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{fancyvrb}
+\usepackage{longtable}
+\usepackage{booktabs}
+
+\geometry{a4paper, margin=2.5cm}
+
+\title{Modelo de Otimização para Cobertura Máxima com Fluxo de Equipes}
+\author{Modelo Hierárquico de Saúde}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\section{Modelo de Cobertura Máxima com Fluxo de Equipes}
+
+Este documento apresenta o modelo matemático de otimização para cobertura máxima com fluxo de equipes, implementado na função \texttt{create\_optimization\_model\_maximal\_coverage\_fluxo\_equipes}.
+
+\subsection{Parâmetros do Modelo}
+
+\begin{longtable}{p{4cm}p{8cm}p{2cm}}
+\toprule
+\textbf{Parâmetro} & \textbf{Descrição} & \textbf{Tipo} \\
+\midrule
+\endhead
+
+$S_{n1}, S_{n2}, S_{n3}$ & Conjuntos de instalações dos níveis 1, 2 e 3 & Conjuntos \\
+$S_d$ & Conjunto de pontos de demanda (setores censitários) & Conjunto \\
+$S_{eq} = \{1, 2\}$ & Conjunto de tipos de equipes (ESF=1, ESB=2) & Conjunto \\
+$S_{ESF}, S_{ESB}, S_{ENASF}$ & Conjuntos de equipes ESF, ESB e ENASF existentes & Conjuntos \\
+$S_{cand}^{n1}$ & Conjunto de locais candidatos para abertura de UBS & Conjunto \\
+$S_{real}^{n1}, S_{real}^{n2}, S_{real}^{n3}$ & Conjuntos de instalações reais & Conjuntos \\
+$D_{n1}(d), D_{n2}(n1), D_{n3}(n2)$ & Domínios de atribuição & Conjuntos \\
+$D_{Emulti}(n)$ & UBS que podem fornecer cobertura ENASF para UBS $n$ & Conjunto \\
+$Dem_d$ & Demanda populacional no ponto $d$ & Vetor \\
+$IVS_d$ & Índice de Vulnerabilidade Social ponderado no ponto $d$ & Vetor \\
+$\alpha_{n1-n2}, \alpha_{n2-n3}$ & Percentuais de fluxo entre níveis & Escalares \\
+$Orc_{max}$ & Orçamento máximo disponível & Escalar \\
+$Dist_{d,n}$ & Distância entre ponto de demanda $d$ e UBS $n$ & Matriz \\
+$Orig_{ESF}(e), Orig_{ESB}(e), Orig_{ENASF}(e)$ & Locais de origem das equipes & Vetores \\
+$Cap_{eq} = 3000$ & Capacidade máxima por equipe & Escalar \\
+$C_{contrat}^{ESF}, C_{contrat}^{ESB}, C_{contrat}^{ENASF}$ & Custos de contratação (30000, 30000, 40000) & Escalares \\
+$C_{realoc}$ & Custo de realocação por km (1000) & Escalar \\
+$C_{mensal}^{ESF}, C_{mensal}^{ESB}, C_{mensal}^{ENASF}$ & Custos mensais (32000, 32000, 90000) & Escalares \\
+$C_{fixo}, C_{abertura}$ & Custos fixos (1500) e abertura (10000) & Escalares \\
+
+\bottomrule
+\end{longtable}
+
+\subsection{Variáveis de Decisão}
+
+\begin{longtable}{p{4cm}p{8cm}p{2cm}}
+\toprule
+\textbf{Variável} & \textbf{Descrição} & \textbf{Tipo} \\
+\midrule
+\endhead
+
+$Aloc_{d,n1}$ & Atribuição do ponto de demanda $d$ à UBS $n1$ & Binária \\
+$Abr_{n1}, Abr_{n2}, Abr_{n3}$ & Abertura de instalação no nível correspondente & Binária \\
+$eq_{ESF}^{e,n1}, eq_{ESB}^{e,n1}$ & Alocação de equipe $e$ para UBS $n1$ & Binária \\
+$eq_{ENASF}^{e,n1}$ & Alocação de equipe ENASF $e$ para UBS $n1$ & Contínua \\
+$eq_{ESF}^{criadas}(n1), eq_{ESB}^{criadas}(n1)$ & Equipes ESF/ESB criadas na UBS $n1$ & Contínua \\
+$eq_{ENASF}^{criadas}(n1)$ & Equipes ENASF criadas na UBS $n1$ & Contínua \\
+$pop_{atendida}^{d,eq,n1}$ & População atendida no ponto $d$ pela equipe $eq$ na UBS $n1$ & Contínua \\
+$pop_{coberta}^{ENASF}_{d,n1}$ & População coberta por ENASF no ponto $d$ pela UBS $n1$ & Contínua \\
+$cobertura_{ENASF}(n1)$ & Cobertura ENASF na UBS $n1$ & Binária \\
+$X_{n1,n2}$ & Fluxo de pacientes do nível 1 para nível 2 & Contínua \\
+$X_{n2,n3}$ & Fluxo de pacientes do nível 2 para nível 3 & Contínua \\
+
+\bottomrule
+\end{longtable}
+
+\subsection{Restrições do Modelo}
+
+\begin{equation}
+\sum_{n1 \in D_{n1}(d)} Aloc_{d,n1} \leq 1, \quad \forall d \in S_d
+\end{equation}
+
+\begin{equation}
+pop_{atendida}^{d,eq,n1} \leq Aloc_{d,n1} \cdot Dem_d, \quad \forall d \in S_d, eq \in S_{eq}, n1 \in D_{n1}(d)
+\end{equation}
+
+\begin{equation}
+Aloc_{d,s} \leq Abr_{n1}(s), \quad \forall d \in S_d, s \in S_{cand}^{n1} \cap D_{n1}(d)
+\end{equation}
+
+\begin{equation}
+Abr_{n1}(n) = 1, \quad \forall n \in S_{real}^{n1}
+\end{equation}
+
+\begin{equation}
+\sum_{n1 \in S_{n1}} eq_{ESF}^{e,n1} \leq 1, \quad \forall e \in S_{ESF}
+\end{equation}
+
+\begin{equation}
+\sum_{n1 \in S_{n1}} eq_{ESB}^{e,n1} \leq 1, \quad \forall e \in S_{ESB}
+\end{equation}
+
+\begin{equation}
+eq_{ESF}^{e,n1} \leq Abr_{n1}(n1), \quad \forall e \in S_{ESF}, n1 \in S_{n1}
+\end{equation}
+
+\begin{equation}
+eq_{ESB}^{e,n1} \leq Abr_{n1}(n1), \quad \forall e \in S_{ESB}, n1 \in S_{n1}
+\end{equation}
+
+\begin{equation}
+\sum_{d \in S_d: n1 \in D_{n1}(d)} pop_{atendida}^{d,1,n1} \leq \left(\sum_{e \in S_{ESF}} eq_{ESF}^{e,n1} + eq_{ESF}^{criadas}(n1)\right) \cdot Cap_{eq}, \quad \forall n1 \in S_{n1}
+\end{equation}
+
+\begin{equation}
+\sum_{d \in S_d: n1 \in D_{n1}(d)} pop_{atendida}^{d,2,n1} \leq \left(\sum_{e \in S_{ESB}} eq_{ESB}^{e,n1} + eq_{ESB}^{criadas}(n1)\right) \cdot Cap_{eq}, \quad \forall n1 \in S_{n1}
+\end{equation}
+
+\begin{equation}
+\sum_{e \in S_{ESF}} eq_{ESF}^{e,n1} + eq_{ESF}^{criadas}(n1) \leq 4, \quad \forall n1 \in S_{n1}
+\end{equation}
+
+\begin{equation}
+\sum_{e \in S_{ESB}} eq_{ESB}^{e,n1} + eq_{ESB}^{criadas}(n1) = \sum_{e \in S_{ESF}} eq_{ESF}^{e,n1} + eq_{ESF}^{criadas}(n1), \quad \forall n1 \in S_{n1}
+\end{equation}
+
+\begin{equation}
+cobertura_{ENASF}(n1) \leq \sum_{j \in D_{Emulti}(n1)} \left(\sum_{e \in S_{ENASF}} eq_{ENASF}^{e,j} + eq_{ENASF}^{criadas}(j)\right), \quad \forall n1 \in S_{n1}
+\end{equation}
+
+\begin{equation}
+\sum_{e \in S_{ENASF}} eq_{ENASF}^{e,n1} + eq_{ENASF}^{criadas}(n1) \leq 1, \quad \forall n1 \in S_{n1}
+\end{equation}
+
+\begin{equation}
+eq_{ENASF}^{criadas}(n1) \leq Abr_{n1}(n1), \quad \forall n1 \in S_{n1}
+\end{equation}
+
+\begin{equation}
+eq_{ENASF}^{e,n1} \leq Abr_{n1}(n1), \quad \forall e \in S_{ENASF}, n1 \in S_{n1}
+\end{equation}
+
+\begin{equation}
+\sum_{n1 \in S_{n1}} eq_{ENASF}^{e,n1} \leq 1, \quad \forall e \in S_{ENASF}
+\end{equation}
+
+\begin{equation}
+pop_{coberta}^{ENASF}_{d,n1} \leq M \cdot cobertura_{ENASF}(n1), \quad \forall d \in S_d, n1 \in D_{n1}(d)
+\end{equation}
+
+\begin{equation}
+pop_{coberta}^{ENASF}_{d,n1} \leq pop_{atendida}^{d,1,n1}, \quad \forall d \in S_d, n1 \in D_{n1}(d)
+\end{equation}
+
+\begin{equation}
+pop_{coberta}^{ENASF}_{d,n1} \geq pop_{atendida}^{d,1,n1} - M \cdot (1 - cobertura_{ENASF}(n1)), \quad \forall d \in S_d, n1 \in D_{n1}(d)
+\end{equation}
+
+onde $M = \max_d Dem_d$.
+
+\begin{equation}
+\sum_{e,n1} eq_{ESF}^{e,n1} + \sum_{n1} eq_{ESF}^{criadas}(n1) \leq 9 \cdot \left(\sum_{e,n1} eq_{ENASF}^{e,n1} + \sum_{n1} eq_{ENASF}^{criadas}(n1)\right)
+\end{equation}
+
+\begin{equation}
+\sum_{n2 \in D_{n2}(n1)} X_{n1,n2} = \alpha_{n1-n2} \cdot \sum_{d \in S_d: n1 \in D_{n1}(d)} pop_{atendida}^{d,1,n1}, \quad \forall n1 \in S_{n1}
+\end{equation}
+
+\begin{equation}
+\sum_{n3 \in D_{n3}(n2)} X_{n2,n3} = \alpha_{n2-n3} \cdot \sum_{n1 \in S_{n1}: n2 \in D_{n2}(n1)} X_{n1,n2}, \quad \forall n2 \in S_{n2}
+\end{equation}
+
+\section{Função Objetivo}
+
+\begin{equation}
+\max \sum_{d \in S_d, eq \in S_{eq}, n1 \in S_{n1}: n1 \in D_{n1}(d)} pop_{atendida}^{d,eq,n1} \cdot IVS_d + \sum_{d \in S_d, n1 \in D_{n1}(d)} pop_{coberta}^{ENASF}_{d,n1} \cdot IVS_d
+\end{equation}
+
+\section{Restrição de Orçamento}
+
+\begin{multline}
+\sum_{n1 \in S_{cand}^{n1}} Abr_{n1}(n1) \cdot C_{abertura} + \sum_{n1 \in S_{real}^{n1}} C_{fixo} + \sum_{n1 \in S_{n1}} Abr_{n1}(n1) \cdot C_{fixo} \\
++ \sum_{n1 \in S_{n1}} eq_{ESF}^{criadas}(n1) \cdot C_{contrat}^{ESF} + \sum_{n1 \in S_{n1}} eq_{ESB}^{criadas}(n1) \cdot C_{contrat}^{ESB} + \sum_{n1 \in S_{n1}} eq_{ENASF}^{criadas}(n1) \cdot C_{contrat}^{ENASF} \\
++ \sum_{e \in S_{ESF}} \sum_{n1 \in S_{n1}} Dist_{Orig_{ESF}(e),n1} \cdot eq_{ESF}^{e,n1} \cdot C_{realoc} + \sum_{e \in S_{ESB}} \sum_{n1 \in S_{n1}} Dist_{Orig_{ESB}(e),n1} \cdot eq_{ESB}^{e,n1} \cdot C_{realoc} \\
++ \sum_{e \in S_{ENASF}} \sum_{n1 \in S_{n1}} Dist_{Orig_{ENASF}(e),n1} \cdot eq_{ENASF}^{e,n1} \cdot C_{realoc} \\
++ \left(\sum_{e \in S_{ESF}} \sum_{n1 \in S_{n1}} eq_{ESF}^{e,n1} + \sum_{n1 \in S_{n1}} eq_{ESF}^{criadas}(n1)\right) \cdot C_{mensal}^{ESF} \\
++ \left(\sum_{e \in S_{ESB}} \sum_{n1 \in S_{n1}} eq_{ESB}^{e,n1} + \sum_{n1 \in S_{n1}} eq_{ESB}^{criadas}(n1)\right) \cdot C_{mensal}^{ESB} \\
++ \left(\sum_{e \in S_{ENASF}} \sum_{n1 \in S_{n1}} eq_{ENASF}^{e,n1} + \sum_{n1 \in S_{n1}} eq_{ENASF}^{criadas}(n1)\right) \cdot C_{mensal}^{ENASF} \leq Orc_{max} \times 6
+\end{multline}
+
+\section{Explicação das Restrições}
+
+O modelo de otimização de cobertura máxima com fluxo de equipes para sistemas de saúde hierárquicos é composto por restrições que garantem a viabilidade operacional e financeira da rede. As restrições 1-4 estabelecem a lógica de atribuição e atendimento: cada ponto de demanda pode ser atendido por no máximo uma UBS, respeitando os limites de capacidade e demanda, e garantindo que instalações candidatas sejam abertas quando necessárias. As restrições 5-8 garantem que as equipes ESF e ESB sejam alocadas adequadamente, respeitando que cada equipe pode ser alocada em no máximo uma UBS e apenas em UBS abertas. As restrições 9-10 modelam a capacidade das equipes, limitando a população atendida pela capacidade total das equipes alocadas. As restrições 11-12 estabelecem limites máximos de equipes por UBS e garantem que o número de equipes ESB seja igual ao de ESF. As restrições 13-18 modelam a cobertura ENASF, incluindo a lógica de cobertura multi-UBS e as restrições de linearização. As restrições 19-21 implementam a linearização da cobertura ENASF usando o método Big-M. A restrição 22 estabelece a proporção entre equipes ESF e ENASF. As restrições 23-24 modelam o fluxo hierárquico de pacientes entre os três níveis de atenção. A função objetivo maximiza a cobertura ponderada pelo Índice de Vulnerabilidade Social (IVS), priorizando o atendimento às populações mais vulneráveis, incluindo tanto a cobertura básica quanto a cobertura ENASF. A restrição de orçamento considera todos os custos operacionais, incluindo abertura, fixos, contratação, realocação e mensais das equipes.
+
+\end{document}

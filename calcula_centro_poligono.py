@@ -2,6 +2,47 @@
 import pandas as pd
 import numpy as np
 import geopandas as gpd
+import json
+
+
+# %%
+df = pd.read_excel(
+    r"C:\Users\marce\OneDrive\Área de Trabalho\MestradoHierarquico\dados_PRONTOS_para_modelo_OTM\instalacoes_secundarias_Contagem.xlsx"
+)
+
+
+# Função para extrair latitude e longitude de uma string POINT
+def extrair_coordenadas_ponto(string_ponto):
+    """
+    Extrai latitude e longitude de uma string no formato 'POINT (longitude latitude)'
+
+    Args:
+        string_ponto (str): String no formato 'POINT (-44.0306576 -19.9339304)'
+
+    Returns:
+        tuple: (latitude, longitude)
+    """
+    # Remove 'POINT (' do início e ')' do final
+    coordenadas_str = string_ponto.replace("POINT (", "").replace(")", "")
+
+    # Divide a string pelos espaços e converte para float
+    coordenadas = coordenadas_str.split()
+    longitude = float(coordenadas[0])
+    latitude = float(coordenadas[1])
+
+    return latitude, longitude
+
+
+df["latitude"] = df.location.apply(lambda x: extrair_coordenadas_ponto(x)[0])
+df["longitude"] = df.location.apply(lambda x: extrair_coordenadas_ponto(x)[1])
+
+df.to_excel("instalacoes_secundarias_Contagem_FIM.xlsx")
+# Exemplo de uso:
+# string_exemplo = 'POINT (-44.0306576 -19.9339304)'
+# latitude, longitude = extrair_coordenadas_ponto(string_exemplo)
+# print(f"Latitude: {latitude}")
+# print(f"Longitude: {longitude}")
+
 
 # %%
 # path_dados_fim = r"C:\Users\marce\OneDrive\Área de Trabalho\MestradoHierarquico\dados_brutos_demanda\Setor-Censitario-APS.xlsx"

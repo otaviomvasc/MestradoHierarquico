@@ -1,4 +1,4 @@
-using JuMP, HiGHS, JLD2, XLSX, DataFrames, PrettyTables, Random
+using JuMP, HiGHS, JLD2, XLSX, DataFrames, PrettyTables, Random, JSON
 using Base: deepcopy 
 
 
@@ -27,9 +27,20 @@ function example_usage()
     println("Calculando parâmetros do modelo...")
     indices, parameters = calculate_model_parameters(mun_data, data)
     
+    # Exporta o campo data.matrix_api para um arquivo JSON externo se ele existir
+    
+    if hasproperty(data, :matrix_api)
+        output_json_path = joinpath(data_path, "matrix_api_export.json")
+        open(output_json_path, "w") do f
+            JSON.print(f, data.matrix_api)
+        end
+        println("Exportado data.matrix_api para: ", output_json_path)
+    else
+        println("Campo data.matrix_api não encontrado, nada foi exportado.")
+    end
     # Configurar parâmetros específicos do cenário
     println("Configurando parâmetros do cenário...")
-    parameters.orcamento_maximo = 10135000
+    parameters.orcamento_maximo = 12617000
     parameters.ponderador_Vulnerabilidade = 1
 
     println("Criando modelo de cobertura máxima")
@@ -39,7 +50,7 @@ function example_usage()
 
     set_optimizer_attribute(model, "primal_feasibility_tolerance", 1e-4)
     set_optimizer_attribute(model, "dual_feasibility_tolerance", 1e-4)
-    set_optimizer_attribute(model, "time_limit", 300.0)
+    set_optimizer_attribute(model, "time_limit", 3600.0)
     set_optimizer_attribute(model, "mip_rel_gap", 0.05)
 
     optimize!(model)
@@ -91,7 +102,7 @@ function example_usage()
 
         
        # Exportar para Excel
-        filename = "Resultados_COBERTURA_MAXIMA_34_END.xlsx"
+        filename = "Resultados_COBERTURA_MAXIMA_35_END_CUSTOS_ATT.xlsx"
         df_results = export_population_results_to_excel(population_results, filename)
         
         # Adicionar dados do fluxo de equipes (novo formato) ao mesmo arquivo Excel

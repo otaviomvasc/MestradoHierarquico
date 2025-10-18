@@ -1,4 +1,4 @@
-using DataFrames
+using DataFrames, HTTP
 
 function create_model_indices(mun_data::MunicipalityData)::ModelIndices
     # Calcular quantidades
@@ -184,8 +184,192 @@ function vincenty_distance(p1::Tuple{<:Real,<:Real}, p2::Tuple{<:Real,<:Real})
     return ((b * A * (sigma - deltaSigma)) / 1000.0) # Convert to kilometers
 end
 
+function get_real_distance(c1::Tuple{Float64, Float64}, c2::Tuple{Float64, Float64}, data::HealthcareData, mun_data::MunicipalityData)
+    # Cria uma chave única para o par de coordenadas (ordem irrelevante)
+    key_str = string((c1, c2))
+    lat_origem = c1[1]
+    long_origem = c1[2]
+    lat_destino = c2[1]
+    long_destino = c2[2]
+    # Tenta ler o JSON com distâncias salvas
+    distances = Dict()
+    println("Buscando dist na matriz")
+    # Verifica se data.matrix_distance existe e busca distância se possível
+    if hasproperty(data, :matrix_distance)
+        for entry in data.matrix_distance
+            try
+                if haskey(entry, "origin") && haskey(entry, "destination")
+                    origin = entry["origin"]
+                    destination = entry["destination"]
+                    lat1 = get(origin, "latitude", nothing)
+                    lon1 = get(origin, "longitude", nothing)
+                    lat2 = get(destination, "latitude", nothing)
+                    lon2 = get(destination, "longitude", nothing)
+                    if lat1 == lat_origem && lon1 == long_origem && lat2 == lat_destino && lon2 == long_destino
+                        if haskey(entry, "distance")
+                            return entry["distance"]
+                        end
+                    end
+                    # Também busca pelo caminho reverso
+                    if lat1 == lat_destino && lon1 == long_destino && lat2 == lat_origem && lon2 == long_origem
+                        if haskey(entry, "distance")
+                            return entry["distance"]
+                        end
+                    end
+                end
+            catch err
+                @warn "Erro ao processar entrada de matrix_distance: $err"
+            end
+        end
+    end
 
-function calculate_distance_matrices(mun_data::MunicipalityData, indices::ModelIndices)::Matriz_Dist
+    # Se já temos a distância salva, retorna!
+    if haskey(distances, key_str)
+        return distances[key_str]
+    end
+    
+    println("Dist nao encontrada! - buscando API")
+    # Tenta buscar distância via API (exemplo: OSRM, Google Maps, MapBox etc)
+    got_from_api = false
+    real_distance_km = nothing
+    try
+        # Exemplo de chamada a API pública do OSRM (ou substitua pela sua preferida)
+        # Cuidado com limites de uso! 
+        # No OSRM você pode rodar docker localmente para grandes volumes!
+        lon1, lat1 = c1[2], c1[1]
+        lon2, lat2 = c2[2], c2[1]
+        url = "http://router.project-osrm.org/route/v1/driving/$lon1,$lat1;$lon2,$lat2?overview=false"
+        response = HTTP.get(url)
+        if response.status == 200
+            parsed = JSON.parse(String(response.body))
+            if haskey(parsed, "routes") && length(parsed["routes"]) > 0
+                real_distance_km = parsed["routes"][1]["distance"] / 1000.0
+                got_from_api = true
+            end
+        end
+    catch api_err
+        @warn "Erro ao requisitar API de rota real: $api_err"
+    end
+
+    # Se conseguiu pela API, salva no JSON e retorna
+    if got_from_api && !isnothing(real_distance_km)
+        # Atualiza o dicionário e salva JSON
+        # Append a new entry, keeping the same dict structure as existing entries in data.matrix_distance
+        push!(data.matrix_distance, Dict(
+            "origin" => Dict("latitude" => c1[1], "longitude" => c1[2]),
+            "destination" => Dict("latitude" => c2[1], "longitude" => c2[2]),
+            "distance" => real_distance_km
+        ))
+        return real_distance_km
+    end
+
+    # Fallback: vincenty_distance!
+     @warn "Fallback in Distance Matrix! Using Vincent Distance:"
+    return vincenty_distance(c1, c2)
+end
+
+
+
+function real_distance_n1_v2(coords_origem::Vector{Tuple{Float64, Float64}}, coords_destino::Vector{Tuple{Float64, Float64}}, data::HealthcareData, mun_data::MunicipalityData )
+    mun_data.Setor_Censitario
+    coords_origem = coords_n1
+    coords_destino = coords_n1
+    #i = 110
+    #j = 150
+    len_unidades_reais = length(mun_data.unidades_n1.cnes)
+
+    # Cria uma matriz de distâncias inicializada com zeros (ou outra dimensão conforme necessário)
+    matriz_distancias = zeros(length(coords_origem), length(coords_destino))
+
+    # Dentro do loop, dentro do if na linha 290, atribui o valor i,j a dist_vd
+    # Isso será feito mais abaixo, mas deixamos a matriz pronta aqui.
+    #i = 15 j = 900!
+
+    for i in eachindex(coords_origem)
+        for j in eachindex(coords_destino)
+            println("Buscando distancias para indice $i e $j")
+        if i == j || matriz_distancias[i, j] != 0
+            #Ja esta salvo como zero!
+            continue
+        end
+        #SE distancia vincenty > 30 km, nem faca o resto das verificacoes!
+        dist_vd = vincenty_distance(coords_origem[i], coords_destino[j])
+        if dist_vd > 10
+            matriz_distancias[i,j] = dist_vd
+            println("indice $i e $j foram pela distancia vincent porque sao maiores que 15")
+            continue
+        end
+
+
+        if i > len_unidades_reais && j > len_unidades_reais
+            #Aqui sao unidades reais e eu posso buscar na matriz!
+            setor_origem = replace(mun_data.Setor_Censitario[i - len_unidades_reais], "P" => "")
+            setor_destino = replace(mun_data.Setor_Censitario[j - len_unidades_reais], "P" => "")
+            println("Buscando dist na matriz")
+            # Verifica se data.matrix_distance existe e busca distância se possível
+            if hasproperty(data, :matrix_distance)
+                for entry in data.matrix_distance
+                    try
+                        if haskey(entry, "origin") && haskey(entry, "destination")
+                            origin = entry["origin"]
+                            destination = entry["destination"]
+                            setor_origem_m = get(origin, "setor", nothing)
+                            setor_destino_m = get(destination, "setor", nothing)
+
+                            if setor_origem_m == setor_origem && setor_destino_m == setor_destino
+                                if haskey(entry, "distance")
+                                    matriz_distancias[i,j] = entry["distance"]
+                                    println("indice $i e $j foram pela distancia JSON")
+                                    break # para o loop que percorre data.matrix_distance
+                                    continue # volta para o loop principal de j
+                                end
+                            end
+                            # Também busca pelo caminho reverso
+                        end
+                    catch err
+                        @warn "Erro ao processar entrada de matrix_distance: $err"
+                    end
+                end
+            end
+
+        end
+
+        real_distance_km = nothing
+        try
+            println("indice $i e $j Buscados na API de distancias!")
+            lat1 = coords_origem[i][1]
+            lon1 = coords_origem[i][2]
+            lat2 = coords_destino[j][1]
+            lon2 = coords_destino[j][2]
+            # Exemplo de chamada a API pública do OSRM (ou substitua pela sua preferida)
+            # Cuidado com limites de uso!
+            url = "http://router.project-osrm.org/route/v1/driving/$lon1,$lat1;$lon2,$lat2?overview=false"
+            response = HTTP.get(url)
+            if response.status == 200
+                parsed = JSON.parse(String(response.body))
+                if haskey(parsed, "routes") && length(parsed["routes"]) > 0
+                    real_distance_km = parsed["routes"][1]["distance"] / 1000.0
+                    matriz_distancias[i,j] = real_distance_km
+                    println("indice $i e $j Encontrados na API de distancias!")
+                    continue
+                end
+            end
+        catch api_err
+            @warn "Erro ao requisitar API de rota real: $api_err"
+        end
+        
+        println("indice $i e $j Nao caiu em nenhuma condicao e como fallback usar Vincent Distance! CHECK DUDE!")
+        matriz_distancias[i,j] = dist_vd
+
+        end  # end for j
+    end      # end for i
+
+
+
+end
+
+
+function calculate_distance_matrices(mun_data::MunicipalityData, indices::ModelIndices, data::HealthcareData)::Matriz_Dist
     # Extrair coordenadas
 
     coords_demanda = mun_data.coordenadas
@@ -195,14 +379,19 @@ function calculate_distance_matrices(mun_data::MunicipalityData, indices::ModelI
     coords_unidades_reais_n2 = [(row.latitude, row.longitude) for row in eachrow(mun_data.unidades_n2)]
     coords_unidades_reais_n3 = [(row.latitude, row.longitude) for row in eachrow(mun_data.unidades_n3)]
     
-    coords_n1 = vcat(coords_unidades_reais_n1, coords_demanda)
+    coords_n1 = vcat(coords_unidades_reais_n1, coords_demanda) 
     coords_n2 = vcat(coords_unidades_reais_n2, coords_demanda)
     coords_n3 = vcat(coords_unidades_reais_n3, coords_demanda)
     
-    Matriz_Dist_Emulti = [vincenty_distance(c1, c2) for c1 in coords_n1, c2 in coords_n1]
-    Matriz_Dist_n1 = [vincenty_distance(c1, c2) for c1 in coords_demanda, c2 in coords_n1]
-    Matriz_Dist_n2 = [vincenty_distance(c1, c2) for c1 in coords_n1, c2 in coords_n2]
-    Matriz_Dist_n3 = [vincenty_distance(c1, c2) for c1 in coords_n2, c2 in coords_n3]
+    # Função para obter distância real via JSON e/ou API ou vincenty como fallback
+
+    path_json = "dados_PRONTOS_para_modelo_OTM\\Contagem_matrix_results_full_matrix.json"
+
+
+    Matriz_Dist_Emulti = [get_real_distance(c1, c2, data, mun_data) for c1 in coords_n1, c2 in coords_n1]
+    Matriz_Dist_n1 = [get_real_distance(c1, c2, data, mun_data) for c1 in coords_demanda, c2 in coords_n1]
+    Matriz_Dist_n2 = [get_real_distance(c1, c2, data, mun_data) for c1 in coords_n1, c2 in coords_n2]
+    Matriz_Dist_n3 = [get_real_distance(c1, c2, data, mun_data) for c1 in coords_n2, c2 in coords_n3]
     
     
     return Matriz_Dist(Matriz_Dist_n1, 
@@ -458,7 +647,7 @@ end
 
 function create_model_parameters(mun_data::MunicipalityData, data::HealthcareData, indices::ModelIndices)::ModelParameters
     # Calcular matrizes de distância
-    S_Matriz_Dist = calculate_distance_matrices(mun_data, indices)
+    S_Matriz_Dist = calculate_distance_matrices(mun_data, indices, data)
     dominios_model = calculate_domains(mun_data, data, S_Matriz_Dist, indices, true)
     # Calcular parâmetros das equipes
     capacidade_n1, custo_n1, 

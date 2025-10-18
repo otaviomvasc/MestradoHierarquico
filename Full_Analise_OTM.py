@@ -1748,10 +1748,10 @@ class AnaliseBaselineMapaSus:
         self.df_baseline["id_setor"] = self.df_baseline["id_setor"].astype(int)
 
         self.custos_mensais = {
-            "EMULTI - EQUIPE MULTIPROFISSIONAL NA AT. PRIMARIA A SAUDE": 90000,
-            "ESB - EQUIPE DE SAUDE BUCAL": 32000,
-            "ESF - EQUIPE DE SAUDE DA FAMILIA": 32000,
-            "Custo Fixo Mensal": 1500,
+            "EMULTI - EQUIPE MULTIPROFISSIONAL NA AT. PRIMARIA A SAUDE": 92000,
+            "ESB - EQUIPE DE SAUDE BUCAL": 22000,
+            "ESF - EQUIPE DE SAUDE DA FAMILIA": 50000,
+            "Custo Fixo Mensal": 130000,
         }
         # TODO: Vai ser fundamental a analise de acessibilidade geografica e capacidade maxima de atendimento nas UBS!
         self.calcula_custos_reais()
@@ -1828,7 +1828,7 @@ class AnaliseBaselineMapaSus:
         )
         fig.update_traces(xbins=dict(start=bin_edges[0], end=bin_edges[-1], size=0.5))
         fig.update_layout(bargap=0.05)
-        df[df.dist > 1.5]["pop"].sum()
+        # df[df.dist > 1.5]["pop"].sum()
         # fig.write_html("dist_distancia.html")
         return fig
         # fig.write_image("comparacao_cobertura.png", width=1400, height=1200)
@@ -1881,6 +1881,20 @@ class ComparaResultadoBaseline:
 
         total_modelo = modelo_ESF + modelo_ESB
         total_real = real_ESF + real_ESB
+
+        # Calcular a variação percentual entre total_modelo e total_real
+        if total_real != 0:
+            variacao_percentual = ((total_modelo - total_real) / total_real) * 100
+        else:
+            variacao_percentual = float("nan")
+
+        print(f"População total: {populacao_total}")
+        print(f"Modelo - População Atendida ESF: {modelo_ESF}")
+        print(f"Modelo - População Atendida ESB: {modelo_ESB}")
+        print(f"Real - População Captada ESF: {real_ESF}")
+        print(f"Real - População Captada ESB: {real_ESB}")
+        print(f"Total Modelo (ESF + ESB): {total_modelo}")
+        print(f"Total Real (ESF + ESB): {total_real}")
 
         # Analise de custos!
         custos_equipe_real = self.baseline.custo_equipes_real
@@ -2728,7 +2742,8 @@ class ComparaResultadoBaseline:
         return fig, {"ESF": df_resultados_esf, "ESB": df_resultados_esb}
 
     def compara_fluxo_emulti(self):
-        b = 0
+        # TODO: Implementar comparação de fluxo emulti
+        pass
 
 
 def main():
@@ -2737,7 +2752,7 @@ def main():
     comparador_cenario = ComparaResultadoBaseline(
         path_cenario=path_cenario, path_baseline=path_baseline
     )
-    comparador_cenario.analises(tamanho_faixa=50)
+    # comparador_cenario.analises(tamanho_faixa=50)
     # comparador_cenario.fluxo_emulti()
 
     # Salvar gráfico
@@ -2748,11 +2763,11 @@ def main():
     # print(df_esb)
     # analise_baseline = AnaliseBaselineMapaSus(path_baseline)
 
-    analise_cen = AnaliseCenario(path_cenario=path_cenario)
+    # analise_cen = AnaliseCenario(path_cenario=path_cenario)
     # map, _ = analise_cen.plota_fluxo_pacientes(fundo_ivs=False)
     # basic_map.save("map_fluxo_Emulti_2.html")
-    map_emulti = analise_cen.plota_fluxo_Emulti()
-    map_fluxo_pacientes, _ = analise_cen.plota_fluxo_pacientes_secundario_terciario()
+    # map_emulti = analise_cen.plota_fluxo_Emulti()
+    # map_fluxo_pacientes, _ = analise_cen.plota_fluxo_pacientes_secundario_terciario()
 
     # map.save("map_fluxo_pacientes_10.html")
     # analise_cen.analise_descritiva_cenario()

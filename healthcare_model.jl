@@ -1,4 +1,4 @@
-using JuMP, HiGHS, DataFrames, XLSX, CSV, Distances
+using JuMP, HiGHS, DataFrames, XLSX, CSV, Distances,  JSON
 
 # Estruturas de dados
 struct Matriz_Dist
@@ -34,6 +34,7 @@ mutable struct HealthcareData
     df_necessidades_primario::DataFrame
     df_necessidades_sec_ter::DataFrame
     df_equipes_primario_v2::DataFrame
+    matrix_distance::Vector{Any}
 end
 
 mutable struct ModelConstants
@@ -149,14 +150,19 @@ function load_healthcare_data(base_path::String)::HealthcareData
     return HealthcareData(
         DataFrame(XLSX.readtable(joinpath(base_path, "Dados_demanda_demografia_ivs.xlsx"), "Sheet1")),
         DataFrame(XLSX.readtable(joinpath(base_path, "instalacoes_primarias.xlsx"), "Sheet1")),
-        DataFrame(XLSX.readtable(joinpath(base_path, "instalacoes_secundarias.xlsx"), "Sheet1")),
+        DataFrame(XLSX.readtable(joinpath(base_path, "instalacoes_secundarias_Contagem_FIM.xlsx"), "Sheet1")),
         DataFrame(XLSX.readtable(joinpath(base_path, "instalacoes_terciarias.xlsx"), "Sheet1")),
         DataFrame(XLSX.readtable(joinpath(base_path, "df_equipes_primario.xlsx"), "Sheet1")),
         DataFrame(XLSX.readtable(joinpath(base_path, "df_equipes_secundario.xlsx"), "Sheet1")),
         DataFrame(XLSX.readtable(joinpath(base_path, "df_equipes_terciario.xlsx"), "Sheet1")),
         DataFrame(XLSX.readtable(joinpath(base_path, "equipes_Primario_FIM _COMPLETO.xlsb.xlsx"), "necessidades_Primario")),
         DataFrame(XLSX.readtable(joinpath(base_path, "equipes_Primario_FIM _COMPLETO.xlsb.xlsx"), "Necessidades_Sec_ter")),
-        DataFrame(XLSX.readtable(joinpath(base_path, "EQUIPES_NAO_PROCESSADO_MAPA_SUS.xlsx"), "Sheet1"))
+        DataFrame(XLSX.readtable(joinpath(base_path, "EQUIPES_NAO_PROCESSADO_MAPA_SUS.xlsx"), "Sheet1")),
+    # Leitura do arquivo JSON
+    open("C:\\Users\\marce\\OneDrive\\Área de Trabalho\\MestradoHierarquico\\dados_PRONTOS_para_modelo_OTM\\Contagem_matrix_results_full_matrix.json", "r") do io
+        matrix_json = JSON.parse(read(io, String))
+        # Agora matrix_json contém o conteúdo do arquivo JSON como array de Dicts
+    end
     )
 end
 

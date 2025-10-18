@@ -1860,19 +1860,19 @@ function create_optimization_model_maximal_coverage_fluxo_equipes(indices::Model
     # ============================================================================================================
     # Restricao de Orcamento
     # ============================================================================================================
-    @expression(model, custo_contratacao_equipes_esf, sum(eq_ESF_criadas[n1] for n1 in S_n1) * 30000)
-    @expression(model, custo_realocaca_equipes_esf, sum((Matriz_Dist_n1[S_origem_equipes_ESF[eq], n1] * eq_ESF_n1[eq, n1]) * 1000 for eq in S_Equipes_ESF, n1 in S_n1 ))
-    @expression(model, custo_mensal_equipes_esf, (sum(eq_ESF_n1[eq, n1]  for eq in S_Equipes_ESF, n1 in S_n1) + sum(eq_ESF_criadas[n1] for n1 in S_n1))  * 32000)
+    @expression(model, custo_contratacao_equipes_esf, sum(eq_ESF_criadas[n1] for n1 in S_n1) * 50000)
+    @expression(model, custo_realocaca_equipes_esf, sum((Matriz_Dist_n1[S_origem_equipes_ESF[eq], n1] * eq_ESF_n1[eq, n1] / 9) * 6 for eq in S_Equipes_ESF, n1 in S_n1 ))
+    @expression(model, custo_mensal_equipes_esf, (sum(eq_ESF_n1[eq, n1]  for eq in S_Equipes_ESF, n1 in S_n1) + sum(eq_ESF_criadas[n1] for n1 in S_n1))  * 50000)
     
     
-    @expression(model, custo_contratacao_equipes_esb, sum(eq_ESB_criadas[n1] for n1 in S_n1) * 30000)
-    @expression(model, custo_realocaca_equipes_esb, sum((Matriz_Dist_n1[S_origem_equipes_ESB[eq], n1] * eq_ESB_n1[eq, n1]) * 1000  for eq in S_Equipes_ESB, n1 in S_n1 ))
-    @expression(model, custo_mensal_equipes_esb, (sum(eq_ESB_n1[eq, n1]  for eq in S_Equipes_ESB, n1 in S_n1) + sum(eq_ESB_criadas[n1] for n1 in S_n1)) * 32000)
+    @expression(model, custo_contratacao_equipes_esb, sum(eq_ESB_criadas[n1] for n1 in S_n1) * 22000)
+    @expression(model, custo_realocaca_equipes_esb, sum((Matriz_Dist_n1[S_origem_equipes_ESB[eq], n1] * eq_ESB_n1[eq, n1] / 9) * 6  for eq in S_Equipes_ESB, n1 in S_n1 ))
+    @expression(model, custo_mensal_equipes_esb, (sum(eq_ESB_n1[eq, n1]  for eq in S_Equipes_ESB, n1 in S_n1) + sum(eq_ESB_criadas[n1] for n1 in S_n1)) * 22000)
 
 
-    @expression(model, custo_contratacao_equipes_enasf, sum(eq_enasf_criadas[n1] for  n1 in S_n1) * 40000)
-    @expression(model, custo_realocaca_equipes_enasf, sum((Matriz_Dist_n1[S_origem_equipes_ENASF[eq], n1] * eq_ENASF_n1[eq, n1]) * 1000  for eq in S_Equipes_ENASF_Reais, n1 in S_n1 ))
-    @expression(model, custo_mensal_equipes_enasf, (sum(eq_ENASF_n1[eq, n1]  for eq in S_Equipes_ENASF, n1 in S_n1) + sum(eq_enasf_criadas[n1] for  n1 in S_n1)) * 90000)
+    @expression(model, custo_contratacao_equipes_enasf, sum(eq_enasf_criadas[n1] for  n1 in S_n1) * 92000)
+    @expression(model, custo_realocaca_equipes_enasf, sum((Matriz_Dist_n1[S_origem_equipes_ENASF[eq], n1] * eq_ENASF_n1[eq, n1] / 9) * 6  for eq in S_Equipes_ENASF_Reais, n1 in S_n1 ))
+    @expression(model, custo_mensal_equipes_enasf, (sum(eq_ENASF_n1[eq, n1]  for eq in S_Equipes_ENASF, n1 in S_n1) + sum(eq_enasf_criadas[n1] for  n1 in S_n1)) * 92000)
 
 
 
@@ -3849,6 +3849,7 @@ function warm_start_ENASF_inteligente!(model)
     println("ENASFs alocadas em $(length(ubs_com_enasf)) UBS")
     println("Warm start ENASF aplicado!")
 end
+
 
 
 function create_model_alocacao_Emulti_ESF(model::Model, indices::ModelIndices, parameters::ModelParameters, mun_data::MunicipalityData)::Tuple{Model, Indices_modelo_alocacao_ESF_Emulti} 
