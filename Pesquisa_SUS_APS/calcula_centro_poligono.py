@@ -12,7 +12,7 @@ df = pd.read_excel(
 
 
 # Função para extrair latitude e longitude de uma string POINT
-def extrair_coordenadas_ponto(string_ponto):
+def extrair_coordenadas_opnto(string_ponto):
     """
     Extrai latitude e longitude de uma string no formato 'POINT (longitude latitude)'
 

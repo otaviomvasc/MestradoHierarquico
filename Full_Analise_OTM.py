@@ -19,11 +19,68 @@ from shapely import length
 from shapely.geometry import Polygon
 
 import matplotlib.pyplot as plt
-import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import re
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+pd.set_option("display.max_columns", None)
+import plotly.io as pio
+
+# Configurar renderer do Plotly - tenta browser, se não funcionar usa o padrão
+try:
+    # Tenta configurar browser como padrão
+    pio.renderers.default = "browser"
+except Exception:
+    # Se falhar, usa o renderer padrão do sistema
+    pass
+
+
+def mostrar_grafico_plotly(fig, nome_arquivo_html=None):
+    """
+    Função auxiliar para mostrar gráficos Plotly no navegador de forma robusta.
+
+    Tenta várias estratégias:
+    1. Abrir com renderer "browser"
+    2. Abrir com renderer padrão
+    3. Salvar como HTML e abrir com webbrowser
+
+    Args:
+        fig: Figura do Plotly
+        nome_arquivo_html: Nome opcional para salvar HTML (padrão: None)
+    """
+    import webbrowser
+    import os
+
+    # Primeiro tenta com renderer browser explícito
+    try:
+        fig.show(renderer="browser")
+        return
+    except Exception as e:
+        print(f"Erro ao abrir no navegador com renderer 'browser': {e}")
+
+    # Tenta com renderer padrão do sistema
+    try:
+        fig.show()
+        return
+    except Exception as e:
+        print(f"Erro ao abrir gráfico com renderer padrão: {e}")
+
+    # Se falhar, salva como HTML e abre
+    if nome_arquivo_html is None:
+        nome_arquivo_html = "grafico_plotly.html"
+
+    try:
+        fig.write_html(nome_arquivo_html)
+        html_path = os.path.abspath(nome_arquivo_html)
+        print(f"Gráfico salvo como '{nome_arquivo_html}'")
+        webbrowser.open(f"file://{html_path}")
+    except Exception as e:
+        print(f"Erro ao salvar/abrir HTML: {e}")
+        print("Tente abrir o gráfico manualmente usando fig.show(renderer='browser')")
+
 
 """
 classe que recebe dois arquivos excel
@@ -839,7 +896,7 @@ class AnaliseCenario:
                 columns=["id", col_result_TP],
                 key_on="feature.id",
                 fill_color="Reds",  # Mudando para vermelho para maior contraste
-                fill_opacity=0.9,  # Aumentando opacidade
+                fill_opacity=0.5,  # Aumentando opacidade
                 line_opacity=0.7,  # Aumentando opacidade das bordas
                 line_color="black",
                 line_weight=1.0,  # Aumentando espessura das bordas
@@ -993,10 +1050,10 @@ class AnaliseCenario:
                 location=[row[lat_destino], row[long_destino]],
                 radius=2,
                 popup=f"UBS: ({row[lat_destino]:.4f}, {row[long_destino]:.4f})",
-                color="black",
-                fillColor="black",
+                color="red",
+                fillColor="red",
                 fillOpacity=0.9,
-                weight=2,
+                weight=3,
             ).add_to(basic_map)
 
         # Adicionar linhas/setas proporcionais à população atendida
@@ -1692,8 +1749,8 @@ class AnaliseCenario:
         fig.update_traces(xbins=dict(start=bin_edges[0], end=bin_edges[-1], size=0.5))
         fig.update_layout(bargap=0.05)
 
-        # fig.write_html("dist_distancia_cenario.html")
-        return fig
+        fig.write_html("dist_distancia_cenario.html")
+        # return fig
 
 
 class AnaliseBaselineMapaSus:
@@ -1751,10 +1808,14 @@ class AnaliseBaselineMapaSus:
             "EMULTI - EQUIPE MULTIPROFISSIONAL NA AT. PRIMARIA A SAUDE": 92000,
             "ESB - EQUIPE DE SAUDE BUCAL": 22000,
             "ESF - EQUIPE DE SAUDE DA FAMILIA": 50000,
-            "Custo Fixo Mensal": 130000,
+            "Custo Fixo Mensal": 122775,
         }
         # TODO: Vai ser fundamental a analise de acessibilidade geografica e capacidade maxima de atendimento nas UBS!
         self.calcula_custos_reais()
+        df_equipes = pd.read_excel(path_data_sus, sheet_name="unidades_full")
+        self.df_emulti_reais = df_equipes[
+            ((df_equipes.SG_EQUIPE == "eMulti") & (df_equipes.ST_EQUIPE_VALIDA == "S"))
+        ].reset_index()
 
     def calcula_custos_reais(self):
         eqs_analise = [70, 71, 72]
@@ -1830,8 +1891,8 @@ class AnaliseBaselineMapaSus:
         fig.update_layout(bargap=0.05)
         # df[df.dist > 1.5]["pop"].sum()
         # fig.write_html("dist_distancia.html")
-        return fig
-        # fig.write_image("comparacao_cobertura.png", width=1400, height=1200)
+        # return fig
+        fig.write_image("comparacao_cobertura.png", width=1400, height=1200)
 
 
 class ComparaResultadoBaseline:
@@ -1850,909 +1911,1454 @@ class ComparaResultadoBaseline:
         # cols_compare_ESB = 'pop_captada_eSB',  'Populacao_Atendida_ESB'
 
     def plota_comparativo_acessibilidade(self):
-        fig_cenario = self.cenario.plota_acessibilidade_geografica_cenario()
-        fig_baseline = self.baseline.plota_acessibilidade_geografica()
+        self.cenario.plota_acessibilidade_geografica_cenario()
+        self.baseline.plota_acessibilidade_geografica()
         # fig_cenario = self.plota_acessibilidade_geografica_cenario
 
-    def analises(self, tamanho_faixa=50):
-        self.plota_comparativo_acessibilidade()
-        # Analises descritivas de quantidades de equipes reais x criadas
-        self.analises_descritivas()
-        # Analise de custo - Diferenca entre baseline e modelo
-
-        figura, dados = self.analisa_cobertura_comparativa_por_ivs_2(
-            tamanho_faixa=tamanho_faixa
-        )
-        figura.show()
-        figura.write_html("comparacao_cobertura_custos_reais.html")
-        figura.write_image("comparacao_cobertura.png", width=1400, height=1200)
-
-        # Proximas analises = Dados de custo e quantitativo de equipes real x criadas!
-
-    def analises_descritivas(self):
-        # populacao total atendida por Esf, EsB,
-        # Populacao_Atendida_ESF, Populacao_Atendida_ESB
-        # populacao_ajustada_eSF, populacao_ajustada_eSB,
-        populacao_total = self.df_merge.Populacao_Total.sum()
-        modelo_ESF = self.df_merge.Populacao_Atendida_ESF.sum()
-        modelo_ESB = self.df_merge.Populacao_Atendida_ESB.sum()
-        real_ESF = self.df_merge.pop_captada_eSF.sum()
-        real_ESB = self.df_merge.pop_captada_eSB.sum()
-
-        total_modelo = modelo_ESF + modelo_ESB
-        total_real = real_ESF + real_ESB
-
-        # Calcular a variação percentual entre total_modelo e total_real
-        if total_real != 0:
-            variacao_percentual = ((total_modelo - total_real) / total_real) * 100
-        else:
-            variacao_percentual = float("nan")
-
-        print(f"População total: {populacao_total}")
-        print(f"Modelo - População Atendida ESF: {modelo_ESF}")
-        print(f"Modelo - População Atendida ESB: {modelo_ESB}")
-        print(f"Real - População Captada ESF: {real_ESF}")
-        print(f"Real - População Captada ESB: {real_ESB}")
-        print(f"Total Modelo (ESF + ESB): {total_modelo}")
-        print(f"Total Real (ESF + ESB): {total_real}")
-
-        # Analise de custos!
-        custos_equipe_real = self.baseline.custo_equipes_real
-        custos_equipe_modelo = self.cenario.df_custos
-
-        import pandas as pd
-        import matplotlib.pyplot as plt
-        import seaborn as sns
-
-        # ============================================================================================================
-        # FORMATAÇÃO DO DATAFRAME DE CUSTOS DO MODELO
-        # ============================================================================================================
-
-        # Assumindo que seu dataframe se chama df_custos_modelo
-
-        # 1. Custos detalhados por tipo de equipe (para gráfico empilhado)
-        df_por_equipe = custos_equipe_modelo[
-            custos_equipe_modelo["Nivel"].isin(["ESF", "ESB", "ENASF"])
+    def compara_quantidade_equipes(self):
+        df_equipes_criadas = self.cenario.df_equipes_criadas.copy()
+        df_fluxo_eqs = self.cenario.df_fluxo_equipes[
+            self.cenario.df_fluxo_equipes.Valor_Variavel > 0
         ].copy()
-        df_por_equipe = df_por_equipe[["Tipo_Custo", "Nivel", "Valor_R", "Percentual"]]
-        df_por_equipe["Valor_Milhoes"] = df_por_equipe["Valor_R"] / 1e6
+        map_indices = {1: "eSF", 2: "eSB", 3: "eMulti"}
+        eqps_fim_modelo = (
+            df_fluxo_eqs.groupby(by=["tipo_equipe"])
+            .agg(qntd_equipes=("cnes_eq", "count"))
+            .reset_index()
+        )
+        eqs_esf_criadas = df_equipes_criadas.eq_ESF_criadas.sum()
+        eqs_esb_criadas = df_equipes_criadas.eq_ESB_criadas.sum()
+        eqs_emulti_criadas = df_equipes_criadas.eq_ENASF_criadas.sum()
+        eqps_fim_modelo["Equipe"] = eqps_fim_modelo.tipo_equipe.apply(
+            lambda x: map_indices[x]
+        )
+        eqps_fim_modelo["Equipes_criadas"] = 0
 
-        # Transformar para formato wide (para gráfico empilhado)
-        df_equipe_pivot = df_por_equipe.pivot(
-            index="Tipo_Custo", columns="Nivel", values="Valor_Milhoes"
+        # Função auxiliar para atualizar ou adicionar linhas conforme necessário
+        def set_equipes_criadas(tipo_equipe_num, equipes_criadas_val, nome_equipe):
+            if "tipo_equipe" in eqps_fim_modelo.columns:
+                if (eqps_fim_modelo.tipo_equipe == tipo_equipe_num).any():
+                    eqps_fim_modelo.loc[
+                        eqps_fim_modelo.tipo_equipe == tipo_equipe_num,
+                        "Equipes_criadas",
+                    ] = equipes_criadas_val
+                else:
+                    # Cria nova linha caso tipo_equipe não exista
+                    nova_linha = {
+                        "tipo_equipe": tipo_equipe_num,
+                        "Equipe": nome_equipe,
+                        "qntd_equipes": 0,
+                        "Equipes_criadas": equipes_criadas_val,
+                    }
+                    eqps_fim_modelo.loc[len(eqps_fim_modelo)] = nova_linha
+            else:
+                # Caso o dataframe não tenha a coluna, nada a fazer (optionally: raise/log)
+                pass
+
+        set_equipes_criadas(1, eqs_esf_criadas, "eSF")
+        set_equipes_criadas(2, eqs_esb_criadas, "eSB")
+        set_equipes_criadas(3, eqs_emulti_criadas, "eMulti")
+        eqps_fim_modelo["Total de Equipes Modelo"] = (
+            eqps_fim_modelo.qntd_equipes + eqps_fim_modelo.Equipes_criadas
         )
 
-        # 2. Totais por categoria (ESF, ESB, ENASF, Infraestrutura)
-        df_totais_categoria = custos_equipe_modelo[
-            custos_equipe_modelo["Nivel"] == "Total por Equipe"
-        ].copy()
-        df_infraestrutura = custos_equipe_modelo[
-            custos_equipe_modelo["Nivel"] == "Total por Categoria"
-        ].copy()
-        df_totais = pd.concat([df_totais_categoria, df_infraestrutura])
-        df_totais = df_totais[["Tipo_Custo", "Valor_R", "Percentual"]].reset_index(
-            drop=True
+        eqs_baseline_total = (
+            self.baseline.df_equipes_bruto.SG_EQUIPE.value_counts().reset_index()
         )
-        df_totais["Valor_Milhoes"] = df_totais["Valor_R"] / 1e6
-
-        # 3. Totais por tipo de custo (Contratação, Realocação, Operação)
-        df_por_tipo = custos_equipe_modelo[
-            custos_equipe_modelo["Nivel"] == "Total por Tipo"
-        ].copy()
-        df_por_tipo = df_por_tipo[["Tipo_Custo", "Valor_R", "Percentual"]].reset_index(
-            drop=True
-        )
-        df_por_tipo["Valor_Milhoes"] = df_por_tipo["Valor_R"] / 1e6
-
-        # ============================================================================================================
-        # FORMATAÇÃO DO DATAFRAME DE CUSTOS REAIS POR EQUIPE
-        # ============================================================================================================
-
-        # Assumindo que seu dataframe se chama df_custos_reais
-        df_custos_reais_formatado = self.baseline.custo_equipes_real.copy()
-
-        # Renomear colunas para padronização
-        df_custos_reais_formatado.columns = [
-            "DS_EQUIPE",
-            "Qntd_Equipes",
-            "Custo_Mensal",
+        df_equipes_real = eqs_baseline_total[
+            eqs_baseline_total.SG_EQUIPE.isin(["eSF", "eSB", "eMulti"])
         ]
-        df_custos_reais_formatado["Custo_Anual"] = (
-            df_custos_reais_formatado["Custo_Mensal"] * 12
-        )
-        df_custos_reais_formatado["Custo_Anual_Milhoes"] = (
-            df_custos_reais_formatado["Custo_Anual"] / 1e6
-        )
-        df_custos_reais_formatado["Custo_Mensal_Milhoes"] = (
-            df_custos_reais_formatado["Custo_Mensal"] / 1e6
+
+        df_equipes_real = df_equipes_real.rename(
+            columns={"SG_EQUIPE": "Equipe", "count": "Total de Equipes Real"}
         )
 
-        # Calcular percentuais
-        total_mensal = df_custos_reais_formatado["Custo_Mensal"].sum()
-        df_custos_reais_formatado["Percentual"] = (
-            df_custos_reais_formatado["Custo_Mensal"] / total_mensal * 100
-        ).round(2)
+        df_final = eqps_fim_modelo.merge(df_equipes_real, on="Equipe", how="left")
 
-        # ============================================================================================================
-        # GRÁFICOS PRONTOS PARA USO
-        # ============================================================================================================
+        # Criar gráfico comparativo de equipes
+        self.cria_grafico_comparativo_equipes(df_final)
+
+    def cria_grafico_comparativo_equipes(self, df_final):
+        """
+        Cria gráfico comparativo entre equipes reais e modelo com 2 subplots
+        """
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+
+        # Preparar dados para o gráfico
+        df_plot = df_final.copy()
+
+        # Definir cores consistentes
+        cores = {
+            "real": "#1f77b4",  # Azul
+            "modelo": "#7f7f7f",  # Cinza
+            "existentes": "#ff7f0e",  # Laranja
+            "criadas": "#2ca02c",  # Verde
+        }
+
+        # Criar figura com 2 subplots
         fig = make_subplots(
-            rows=3,
-            cols=2,
+            rows=2,
+            cols=1,
             subplot_titles=(
-                "Custos por Tipo de Equipe (Empilhado)",
-                "Custos Totais por Categoria",
-                "Custos por Tipo de Despesa",
-                "Custos Operacionais Reais (Mensal)",
-                "Distribuição Percentual dos Custos",
-                "Resumo: Custo Total do Sistema",
+                "Total de Equipes Modelo x Real",
+                "Equipes Criadas e Mantidas - Modelo",
             ),
             specs=[
-                [{"type": "bar"}, {"type": "bar"}],
-                [{"type": "bar"}, {"type": "bar"}],
-                [{"type": "pie"}, {"type": "bar"}],
+                [{"type": "bar"}],
+                [{"type": "bar"}],
             ],
-            vertical_spacing=0.12,
-            horizontal_spacing=0.10,
+            vertical_spacing=0.25,
         )
 
-        # Cores padronizadas
-        cores = {"ESF": "#1f77b4", "ESB": "#ff7f0e", "ENASF": "#2ca02c"}
-
         # ============================================================================================================
-        # SUBPLOT 1: Custos por tipo de equipe (empilhado)
+        # GRÁFICO 1: Comparação Total de Equipes Modelo vs Real
         # ============================================================================================================
 
-        for equipe in ["ESF", "ESB", "ENASF"]:
-            df_temp = df_por_equipe[df_por_equipe["Nivel"] == equipe]
+        # Adicionar barra para equipes reais
+        fig.add_trace(
+            go.Bar(
+                x=df_plot["Equipe"],
+                y=df_plot["Total de Equipes Real"],
+                name="Total de Equipes Real",
+                marker_color=cores["real"],
+                text=df_plot["Total de Equipes Real"],
+                textposition="outside",
+                showlegend=True,
+            ),
+            row=1,
+            col=1,
+        )
+
+        # Adicionar barra para equipes do modelo
+        fig.add_trace(
+            go.Bar(
+                x=df_plot["Equipe"],
+                y=df_plot["Total de Equipes Modelo"],
+                name="Total de Equipes Modelo",
+                marker_color=cores["modelo"],
+                text=df_plot["Total de Equipes Modelo"],
+                textposition="outside",
+                showlegend=True,
+            ),
+            row=1,
+            col=1,
+        )
+
+        # ============================================================================================================
+        # GRÁFICO 2: Equipes Criadas e Mantidas no Modelo
+        # ============================================================================================================
+
+        # Adicionar barra para equipes existentes (mantidas)
+        fig.add_trace(
+            go.Bar(
+                x=df_plot["Equipe"],
+                y=df_plot["qntd_equipes"],
+                name="Equipes Mantidas (Modelo)",
+                marker_color=cores["existentes"],
+                text=df_plot["qntd_equipes"],
+                textposition="outside",
+                showlegend=True,
+            ),
+            row=2,
+            col=1,
+        )
+
+        # Adicionar barra para equipes criadas
+        fig.add_trace(
+            go.Bar(
+                x=df_plot["Equipe"],
+                y=df_plot["Equipes_criadas"],
+                name="Equipes Criadas (Modelo)",
+                marker_color=cores["criadas"],
+                text=df_plot["Equipes_criadas"],
+                textposition="outside",
+                showlegend=True,
+            ),
+            row=2,
+            col=1,
+        )
+
+        # ============================================================================================================
+        # CONFIGURAÇÃO DO LAYOUT
+        # ============================================================================================================
+
+        fig.update_layout(
+            height=1000,
+            width=1200,
+            title_text="Análise Comparativa de Equipes: Real vs Modelo",
+            title_x=0.5,
+            title_font_size=16,
+            showlegend=True,
+            paper_bgcolor="#ffffff",
+            plot_bgcolor="#ffffff",
+            margin=dict(t=90, b=90, l=80, r=40),
+            legend=dict(
+                orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5
+            ),
+            barmode="group",
+            bargap=0.2,
+        )
+
+        # Configurar eixos
+        fig.update_xaxes(title_text="Tipo de Equipe", row=1, col=1)
+        fig.update_xaxes(title_text="Tipo de Equipe", row=2, col=1)
+
+        fig.update_yaxes(title_text="Quantidade de Equipes", row=1, col=1)
+        fig.update_yaxes(title_text="Quantidade de Equipes", row=2, col=1)
+
+        # Rotacionar labels do eixo x para melhor legibilidade
+        fig.update_xaxes(tickangle=45, row=1, col=1)
+        fig.update_xaxes(tickangle=45, row=2, col=1)
+
+        # Ajustes globais de traços
+        fig.update_traces(cliponaxis=False)
+
+        # Salvar o gráfico
+        fig.write_html("comparacao_equipes_real_vs_modelo.html")
+        fig.write_image(
+            "comparacao_equipes_real_vs_modelo.png", width=1200, height=1000
+        )
+
+        print("Gráfico comparativo de equipes criado e salvo!")
+        print(f"Arquivos gerados:")
+        print(f"- comparacao_equipes_real_vs_modelo.html")
+        print(f"- comparacao_equipes_real_vs_modelo.png")
+
+        # Mostrar resumo dos dados
+        print("\nResumo dos dados:")
+        for _, row in df_plot.iterrows():
+            print(f"{row['Equipe']}:")
+            print(f"  Real: {row['Total de Equipes Real']}")
+            print(f"  Modelo Total: {row['Total de Equipes Modelo']}")
+            print(f"    - Existentes: {row['qntd_equipes']}")
+            print(f"    - Criadas: {row['Equipes_criadas']}")
+            print()
+
+        # return fig
+
+    def plota_comparacao_equipes_emulti(self, df_merge):
+        df_plot = df_merge.copy()
+        df_plot["cnes_eq_multi"] = df_plot["cnes_eq_emulti"].fillna(
+            df_plot["CO_EQUIPE"]
+        )
+
+        # Renomear coluna baseline para real conforme solicitado
+        if "EQUIPES_VINCULADAS_baseline" in df_plot.columns:
+            df_plot["EQUIPES_VINCULADAS_real"] = df_plot["EQUIPES_VINCULADAS_baseline"]
+
+        # Filtrar apenas linhas com dados válidos e ordenar
+        df_plot = df_plot[df_plot["cnes_eq_multi"].notna()].copy()
+        df_plot = df_plot.sort_values("cnes_eq_multi").reset_index(drop=True)
+
+        # Preparar dados para plotly (formato longo)
+        # Garantir que a coluna EQUIPES_VINCULADAS_real existe
+        if "EQUIPES_VINCULADAS_real" not in df_plot.columns:
+            if "EQUIPES_VINCULADAS_baseline" in df_plot.columns:
+                df_plot["EQUIPES_VINCULADAS_real"] = df_plot[
+                    "EQUIPES_VINCULADAS_baseline"
+                ]
+
+        # Preencher NaN com 0
+        df_plot["EQUIPES_VINCULADAS_modelo"] = df_plot[
+            "EQUIPES_VINCULADAS_modelo"
+        ].fillna(0)
+        if "EQUIPES_VINCULADAS_real" in df_plot.columns:
+            df_plot["EQUIPES_VINCULADAS_real"] = df_plot[
+                "EQUIPES_VINCULADAS_real"
+            ].fillna(0)
+
+        # Criar dataframe no formato longo para plotly
+        df_melt = pd.melt(
+            df_plot,
+            id_vars=["cnes_eq_multi"],
+            value_vars=["EQUIPES_VINCULADAS_modelo", "EQUIPES_VINCULADAS_real"],
+            var_name="Tipo",
+            value_name="Quantidade",
+        )
+
+        # Renomear os valores para nomes mais legíveis
+        df_melt["Tipo"] = df_melt["Tipo"].replace(
+            {
+                "EQUIPES_VINCULADAS_modelo": "Modelo",
+                "EQUIPES_VINCULADAS_real": "Real",
+            }
+        )
+
+        # Converter cnes_eq_multi para string para melhor visualização
+        df_melt["cnes_eq_multi"] = df_melt["cnes_eq_multi"].astype(str)
+
+        # Criar gráfico de barras agrupadas com plotly express
+        fig = px.bar(
+            df_melt,
+            x="cnes_eq_multi",
+            y="Quantidade",
+            color="Tipo",
+            barmode="group",
+            color_discrete_map={"Modelo": "blue", "Real": "gray"},
+            title="Comparação: Equipes Vinculadas - Modelo vs Real",
+            labels={
+                "cnes_eq_multi": "CNES Equipe Multi",
+                "Quantidade": "Quantidade de Equipes Vinculadas",
+                "Tipo": "Tipo",
+            },
+        )
+
+        # Atualizar layout
+        fig.update_layout(
+            xaxis_tickangle=-45,
+            showlegend=True,
+            height=600,
+        )
+
+        # Usar função auxiliar para mostrar gráfico de forma robusta
+        mostrar_grafico_plotly(fig, "grafico_equipes_vinculadas.html")
+
+    def plota_mapa_comparativo_emulti(self, df_merge):
+        """
+        Plota mapa comparativo das equipes eMulti mostrando:
+        - Fundo coropletico do IVS
+        - Pontos pretos escuros se coordenadas do modelo = coordenadas reais
+        - Estrela verde para coordenadas do modelo (LATITUDE_FINAL, LONGITUDE_FINAL)
+        - Triangulo amarelo para coordenadas reais (LATITUDE, LONGITUDE)
+        """
+        map, df_b = self.cenario.plota_mapa_basico_setores_censitarios(
+            fundo_ivs=True, fundo_cobertura=False
+        )
+
+        pontos_plotados = 0
+        pontos_iguais = 0
+        pontos_modelo = 0
+        pontos_real = 0
+
+        for _, row in df_merge.iterrows():
+            lat_final = row.get("LATITUDE_FINAL")
+            lon_final = row.get("LONGITUDE_FINAL")
+            lat_real = row.get("LATITUDE")
+            lon_real = row.get("LONGITUDE")
+
+            # Verificar se coordenadas sao validas
+            lat_final_valid = pd.notna(lat_final) and pd.notna(lon_final)
+            lat_real_valid = pd.notna(lat_real) and pd.notna(lon_real)
+
+            if not lat_final_valid and not lat_real_valid:
+                continue
+
+            # Converter para float
+            try:
+                if lat_final_valid:
+                    lat_final = float(lat_final)
+                    lon_final = float(lon_final)
+                if lat_real_valid:
+                    lat_real = float(lat_real)
+                    lon_real = float(lon_real)
+            except (ValueError, TypeError):
+                continue
+
+            # Verificar se coordenadas sao iguais (com tolerancia de 0.0001 graus ~11 metros)
+            coordenadas_iguais = False
+            if lat_final_valid and lat_real_valid:
+                if (
+                    abs(lat_final - lat_real) < 0.0001
+                    and abs(lon_final - lon_real) < 0.0001
+                ):
+                    coordenadas_iguais = True
+
+            # Obter informacoes para tooltip
+            cnes_eq = row.get("cnes_eq_emulti") or row.get("CO_EQUIPE") or "N/A"
+            nome_fantasia = row.get("NO_FANTASIA", "N/A")
+            equipas_vinculadas = (
+                row.get("EQUIPES_VINCULADAS_modelo")
+                or row.get("EQUIPES_VINCULADAS_baseline")
+                or "N/A"
+            )
+
+            tooltip_text = f"CNES: {cnes_eq}<br>Nome: {nome_fantasia}<br>Equipes: {equipas_vinculadas}"
+
+            if coordenadas_iguais:
+                # Coordenadas sao iguais - plotar ponto preto escuro
+                if lat_final_valid:
+                    folium.CircleMarker(
+                        location=[lat_final, lon_final],
+                        radius=8,
+                        color="white",
+                        fillColor="black",
+                        fillOpacity=1.0,
+                        weight=3,
+                        popup=tooltip_text,
+                    ).add_to(map)
+                    pontos_plotados += 1
+                    pontos_iguais += 1
+            else:
+                # Coordenadas sao diferentes - plotar ambas
+                # Marcador verde para coordenadas do modelo
+                if lat_final_valid:
+                    folium.CircleMarker(
+                        location=[lat_final, lon_final],
+                        radius=8,
+                        color="white",
+                        fillColor="#00FF00",
+                        fillOpacity=1.0,
+                        weight=3,
+                        popup=tooltip_text + "<br>Tipo: Modelo",
+                    ).add_to(map)
+                    pontos_plotados += 1
+                    pontos_modelo += 1
+
+                # Marcador laranja para coordenadas reais
+                if lat_real_valid:
+                    folium.CircleMarker(
+                        location=[lat_real, lon_real],
+                        radius=8,
+                        color="white",
+                        fillColor="#FFA500",
+                        fillOpacity=1.0,
+                        weight=3,
+                        popup=tooltip_text + "<br>Tipo: Real",
+                    ).add_to(map)
+                    pontos_plotados += 1
+                    pontos_real += 1
+
+        # Adicionar legenda customizada
+        legenda_html = f"""
+        <div style="
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            width: 220px;
+            background-color: white;
+            border: 2px solid grey;
+            border-radius: 5px;
+            padding: 10px;
+            font-family: Arial, sans-serif;
+            font-size: 12px;
+            z-index: 9999;
+            box-shadow: 2px 2px 6px rgba(0,0,0,0.3);
+        ">
+            <h4 style="margin: 0 0 10px 0; font-size: 14px; font-weight: bold;">
+                Legenda - Equipes eMulti
+            </h4>
+            <div style="margin-bottom: 8px;">
+                <span style="
+                    display: inline-block;
+                    width: 16px;
+                    height: 16px;
+                    background-color: black;
+                    border: 2px solid white;
+                    border-radius: 50%;
+                    margin-right: 8px;
+                    vertical-align: middle;
+                "></span>
+                <span style="vertical-align: middle;">
+                    Coordenadas Iguais ({pontos_iguais})
+                </span>
+            </div>
+            <div style="margin-bottom: 8px;">
+                <span style="
+                    display: inline-block;
+                    width: 16px;
+                    height: 16px;
+                    background-color: #00FF00;
+                    border: 2px solid white;
+                    border-radius: 50%;
+                    margin-right: 8px;
+                    vertical-align: middle;
+                "></span>
+                <span style="vertical-align: middle;">
+                    Coordenadas Modelo ({pontos_modelo})
+                </span>
+            </div>
+            <div style="margin-bottom: 0;">
+                <span style="
+                    display: inline-block;
+                    width: 16px;
+                    height: 16px;
+                    background-color: #FFA500;
+                    border: 2px solid white;
+                    border-radius: 50%;
+                    margin-right: 8px;
+                    vertical-align: middle;
+                "></span>
+                <span style="vertical-align: middle;">
+                    Coordenadas Reais ({pontos_real})
+                </span>
+            </div>
+        </div>
+        """
+
+        map.get_root().html.add_child(folium.Element(legenda_html))
+
+        print(f"Total de pontos plotados: {pontos_plotados}")
+        print(f"  - Coordenadas iguais: {pontos_iguais}")
+        print(f"  - Coordenadas modelo: {pontos_modelo}")
+        print(f"  - Coordenadas reais: {pontos_real}")
+
+        folium.LayerControl().add_to(map)
+        map.save("mapa_comparativo_emulti.html")
+        print(f"Mapa salvo com sucesso!")
+
+        def analisa_emulti(self):
+
+            df_modelo = self.cenario.dados_fluxo_emulti.copy()
+            df_modelo = self.cenario.dados_fluxo_emulti.copy()
+            df_modelo_end = (
+                df_modelo.groupby(by="cnes_eq_emulti")
+                .agg(
+                    EQUIPES_VINCULADAS=("cnes_eq_esf", "count"),
+                    LATITUDE_FINAL=("lat_emulti", "first"),
+                    LONGITUDE_FINAL=("long_emulti", "first"),
+                )
+                .reset_index()
+            )
+
+            cols_real = [
+                "CO_EQUIPE",
+                "EQUIPES_VINCULADAS",
+                "NO_FANTASIA",
+                "CO_CNES",
+                "LATITUDE",
+                "LONGITUDE",
+                "geometry",
+            ]
+            df_real = self.baseline.df_emulti_reais[cols_real].copy()
+            df_merge = df_modelo_end.merge(
+                df_real,
+                left_on="cnes_eq_emulti",
+                right_on="CO_EQUIPE",
+                how="outer",
+                suffixes=("_modelo", "_baseline"),
+            )
+
+            # Preparar dados para o gráfico
+            # Usar cnes_eq_emulti ou CO_EQUIPE como identificador (qualquer um que tiver valor)
+            self.plota_mapa_comparativo_emulti(df_merge)
+            self.plota_comparacao_equipes_emulti(df_merge)
+
+        def analises(self, tamanho_faixa=50):
+            self.analisa_emulti()
+            self.analises_descritivas()
+            self.compara_quantidade_equipes()
+            self.plota_comparativo_acessibilidade()
+            self.analisa_cobertura_comparativa_por_ivs_2(tamanho_faixa=tamanho_faixa)
+
+            # Proximas analises = Dados de custo e quantitativo de equipes real x criadas!
+            # Diferenca de equipes !
+
+            # DF's com resultado: self.df_resultados_esb, self.df_resultados_esf, self.df_resumo_descritivo
+
+            # Comparacao Emulti!
+            # Quantidade de equipes ESF Cobertas
+            #
+            # Histograma da distancia da populacao para mostrar que ficamos mais proximos dos locais vulneraveis
+            # Mapa grafico com antes e depois da alocacao das eMulti!
+
+        def analises_descritivas(self):
+            # populacao total atendida por Esf, EsB,
+            # Populacao_Atendida_ESF, Populacao_Atendida_ESB
+            # populacao_ajustada_eSF, populacao_ajustada_eSB,
+            populacao_total = self.df_merge.Populacao_Total.sum()
+            modelo_ESF = self.df_merge.Populacao_Atendida_ESF.sum()
+            modelo_ESB = self.df_merge.Populacao_Atendida_ESB.sum()
+            real_ESF = self.df_merge.pop_captada_eSF.sum()
+            real_ESB = self.df_merge.pop_captada_eSB.sum()
+
+            cobertura_ESF_modelo = round(modelo_ESF / populacao_total, 3)
+            cobertura_ESB_modelo = round(modelo_ESB / populacao_total, 3)
+
+            cobertura_ESF_real = round(real_ESF / populacao_total, 3)
+            cobertura_ESB_real = round(real_ESB / populacao_total, 3)
+
+            total_modelo = modelo_ESF + modelo_ESB
+            total_real = real_ESF + real_ESB
+            cobertura_total_modelo = round((total_modelo) / (populacao_total * 2), 3)
+            cobertura_total_real = round((total_real) / (populacao_total * 2), 3)
+
+            # Calcular a variação percentual entre total_modelo e total_real
+            if total_real != 0:
+                variacao_percentual = ((total_modelo - total_real) / total_real) * 100
+            else:
+                variacao_percentual = float("nan")
+
+            dados_descritivos = {
+                "População total": populacao_total,
+                "Modelo - População Atendida ESF": modelo_ESF,
+                "Modelo - População Atendida ESB": modelo_ESB,
+                "Real - População Captada ESF": real_ESF,
+                "Real - População Captada ESB": real_ESB,
+                "Total Modelo (ESF + ESB)": total_modelo,
+                "Total Real (ESF + ESB)": total_real,
+                "Cobertura ESF Modelo": cobertura_ESF_modelo,
+                "Cobertura ESF Real": cobertura_ESF_real,
+                "Cobertura ESB Modelo": cobertura_ESB_modelo,
+                "Cobertura ESB Real": cobertura_ESB_real,
+                "Cobertura (ESF+ESB) Juntos - Modelo": cobertura_total_modelo,
+                "Cobertura (ESF+ESB) Juntos - Real": cobertura_total_real,
+            }
+            self.df_resumo_descritivo = pd.DataFrame(
+                list(dados_descritivos.items()), columns=["Indicador", "Valor"]
+            )
+
+            print(f"População total: {populacao_total}")
+            print(f"Modelo - População Atendida ESF: {modelo_ESF}")
+            print(f"Modelo - População Atendida ESB: {modelo_ESB}")
+            print(f"Real - População Captada ESF: {real_ESF}")
+            print(f"Real - População Captada ESB: {real_ESB}")
+            print(f"Total Modelo (ESF + ESB): {total_modelo}")
+            print(f"Total Real (ESF + ESB): {total_real}")
+            print(f"Cobertura ESF Modelo: {cobertura_ESF_modelo}")
+            print(f"Cobertura ESF Real: {cobertura_ESF_real}")
+            print(f"Cobertura ESF Modelo: {cobertura_ESB_modelo}")
+            print(f"Cobertura ESF Real: {cobertura_ESB_real}")
+            print(
+                f"Cobertura ESF e ESB Juntos - Modelo = (Cobertura ESF + Cobertura ESB) / (Pop * 2) = {cobertura_total_modelo} "
+            )
+            print(
+                f"Cobertura ESF e ESB Juntos - Real = (Cobertura ESF + Cobertura ESB) / (Pop * 2) = {cobertura_total_real} "
+            )
+
+            # Analise de custos!
+            custos_equipe_real = self.baseline.custo_equipes_real.copy()
+            custos_equipe_modelo = self.cenario.df_custos.copy()
+            custos_fora_grafico = [
+                "Contratação ESF",
+                "Realocação ESF",
+                "Contratação ESB",
+                "Realocação ESB",
+                "Contratação ENASF",
+                "Realocação ENASF",
+            ]
+
+            custos_equipe_modelo = custos_equipe_modelo[
+                ~custos_equipe_modelo.Tipo_Custo.isin(custos_fora_grafico)
+            ]
+
+            # ============================================================================================================
+            # FORMATAÇÃO DO DATAFRAME DE CUSTOS DO MODELO
+            # ============================================================================================================
+
+            # Assumindo que seu dataframe se chama df_custos_modelo
+
+            # 1. Custos detalhados por tipo de equipe (para gráfico empilhado)
+            df_por_equipe = custos_equipe_modelo[
+                custos_equipe_modelo["Nivel"].isin(["ESF", "ESB", "ENASF"])
+            ].copy()
+            df_por_equipe = df_por_equipe[
+                ["Tipo_Custo", "Nivel", "Valor_R", "Percentual"]
+            ]
+            df_por_equipe["Valor_Milhoes"] = df_por_equipe["Valor_R"] / 1e6
+
+            # Transformar para formato wide (para gráfico empilhado)
+            df_equipe_pivot = df_por_equipe.pivot(
+                index="Tipo_Custo", columns="Nivel", values="Valor_Milhoes"
+            )
+
+            # 2. Totais por categoria (ESF, ESB, ENASF, Infraestrutura)
+            df_totais_categoria = custos_equipe_modelo[
+                custos_equipe_modelo["Nivel"] == "Total por Equipe"
+            ].copy()
+            df_infraestrutura = custos_equipe_modelo[
+                custos_equipe_modelo["Nivel"] == "Total por Categoria"
+            ].copy()
+            df_totais = pd.concat([df_totais_categoria, df_infraestrutura])
+            df_totais = df_totais[["Tipo_Custo", "Valor_R", "Percentual"]].reset_index(
+                drop=True
+            )
+            df_totais["Valor_Milhoes"] = df_totais["Valor_R"] / 1e6
+
+            # 3. Totais por tipo de custo (Contratação, Realocação, Operação)
+            df_por_tipo = custos_equipe_modelo[
+                custos_equipe_modelo["Nivel"] == "Total por Tipo"
+            ].copy()
+            df_por_tipo = df_por_tipo[
+                ["Tipo_Custo", "Valor_R", "Percentual"]
+            ].reset_index(drop=True)
+            df_por_tipo["Valor_Milhoes"] = df_por_tipo["Valor_R"] / 1e6
+
+            # ============================================================================================================
+            # FORMATAÇÃO DO DATAFRAME DE CUSTOS REAIS POR EQUIPE
+            # ============================================================================================================
+
+            # Assumindo que seu dataframe se chama df_custos_reais
+            df_custos_reais_formatado = self.baseline.custo_equipes_real.copy()
+
+            # Renomear colunas para padronização
+            df_custos_reais_formatado.columns = [
+                "DS_EQUIPE",
+                "Qntd_Equipes",
+                "Custo_Mensal",
+            ]
+            df_custos_reais_formatado["Custo_Anual"] = (
+                df_custos_reais_formatado["Custo_Mensal"] * 12
+            )
+            df_custos_reais_formatado["Custo_Anual_Milhoes"] = (
+                df_custos_reais_formatado["Custo_Anual"] / 1e6
+            )
+            df_custos_reais_formatado["Custo_Mensal_Milhoes"] = (
+                df_custos_reais_formatado["Custo_Mensal"] / 1e6
+            )
+
+            # Calcular percentuais
+            total_mensal = df_custos_reais_formatado["Custo_Mensal"].sum()
+            df_custos_reais_formatado["Percentual"] = (
+                df_custos_reais_formatado["Custo_Mensal"] / total_mensal * 100
+            ).round(2)
+
+            # ============================================================================================================
+            # GRÁFICOS Comparativos Real x Modelo por Equipes!
+            # ============================================================================================================
+            def refact__equipes_name_to_plot(eq):
+                if "EMULTI" in eq or "ENASF" in eq:
+                    return "eMulti"
+                if "ESB" in eq:
+                    return "eSB"
+                if "ESF" in eq:
+                    return "eSF"
+
+            # total por equipe
+            agg_plot_modelo_total_equipe = (
+                df_por_equipe.groupby(by="Nivel")
+                .agg(total_por_equie=("Valor_Milhoes", "sum"))
+                .reset_index()
+            )
+            agg_plot_modelo_total_equipe["Tp_custo"] = "Modelo"
+            agg_plot_real_total_equipe = df_custos_reais_formatado[
+                ["DS_EQUIPE", "Custo_Mensal_Milhoes"]
+            ]
+            agg_plot_real_total_equipe["Tp_custo"] = "Real"
+            agg_plot_real_total_equipe = agg_plot_real_total_equipe.rename(
+                columns={"DS_EQUIPE": "Equipe", "Custo_Mensal_Milhoes": "Custo Total"}
+            )
+            agg_plot_modelo_total_equipe = agg_plot_modelo_total_equipe.rename(
+                columns={"Nivel": "Equipe", "total_por_equie": "Custo Total"}
+            )
+            df_plot_comp_custos_total = pd.concat(
+                [agg_plot_modelo_total_equipe, agg_plot_real_total_equipe]
+            )
+            df_plot_comp_custos_total["Equipe"] = df_plot_comp_custos_total[
+                "Equipe"
+            ].apply(refact__equipes_name_to_plot)
+
+            # custo total por equipe!
+            custo_total_equipes_modelo_dict = {
+                "Equipe": "Custo Total de Equipes",
+                "Custo Total": round(
+                    df_plot_comp_custos_total[
+                        df_plot_comp_custos_total.Tp_custo == "Modelo"
+                    ]["Custo Total"].sum(),
+                    3,
+                ),
+                "Tp_custo": "Modelo",
+            }
+
+            custo_total_equipes_real_dict = {
+                "Equipe": "Custo Total de Equipes",
+                "Custo Total": round(
+                    df_plot_comp_custos_total[
+                        df_plot_comp_custos_total.Tp_custo == "Real"
+                    ]["Custo Total"].sum(),
+                    3,
+                ),
+                "Tp_custo": "Real",
+            }
+
+            df_totais_custo = pd.DataFrame(
+                [custo_total_equipes_modelo_dict, custo_total_equipes_real_dict]
+            )
+
+            df_plot_comp_custos_total_equipes = pd.concat(
+                [df_plot_comp_custos_total, df_totais_custo], ignore_index=True
+            )
+
+            # ============================================================================================================
+            # GRÁFICOS Comparativos Real x Modelo geral: Custo de Equipes, Custo Fixo, Custo Variavel, Custo Realocacao,
+            # ============================================================================================================
+            # Calcular variáveis individuais
+            custo_fixo_real = round(self.baseline.custo_fixo_real / 1000000, 3)
+            custo_fixo_equipes_real = (
+                df_custos_reais_formatado.Custo_Mensal_Milhoes.sum()
+            )
+            # custo_realocacao_equipes_real = 0
+            # custo_contratacao_equipes_real = 0
+            custo_abertura_unidades_real = 0
+            custo_total_real = round(self.baseline.custo_total / 1000000, 3)
+
+            custo_fixo_modelo = round(
+                self.cenario.df_custos[
+                    self.cenario.df_custos.Tipo_Custo == "Custo Fixo UBS"
+                ].Valor_R.iloc[0]
+                / 1000000,
+                3,
+            )
+            custo_fixo_equipes_modelo = round(
+                self.cenario.df_custos[
+                    (
+                        (self.cenario.df_custos.Nivel == "Total por Tipo")
+                        & (self.cenario.df_custos.Tipo_Custo == "Total Operação")
+                    )
+                ].Valor_R.iloc[0]
+                / 1000000,
+                3,
+            )
+            """
+            custo_realocacao_equipes_modelo = round(
+                self.cenario.df_custos[
+                    (
+                        (self.cenario.df_custos.Nivel == "Total por Tipo")
+                        & (self.cenario.df_custos.Tipo_Custo == "Total Realocação")
+                    )
+                ].Valor_R.iloc[0]
+                / 1000000,
+                3,
+            )
+            custo_contratacao_equipes_modelo = round(
+                self.cenario.df_custos[
+                    (
+                        (self.cenario.df_custos.Nivel == "Total por Tipo")
+                        & (self.cenario.df_custos.Tipo_Custo == "Total Contratação")
+                    )
+                ].Valor_R.iloc[0]
+                / 1000000,
+                3,
+            )
+            
+            
+            """
+
+            custo_abertura_unidades_modelo = round(
+                self.cenario.df_custos[
+                    self.cenario.df_custos.Tipo_Custo == "Abertura UBS"
+                ].Valor_R.iloc[0]
+                / 1000000,
+                3,
+            )
+            custo_total_modelo = round(
+                self.cenario.df_custos[
+                    self.cenario.df_custos.Tipo_Custo == "CUSTO TOTAL"
+                ].Valor_R.iloc[0]
+                / 1000000,
+                3,
+            )
+
+            # Passar tudo para um dataframe "longo" conforme solicitado
+            # Tipo de custo será o nome base sem o sufixo _real/_modelo
+            # Tp_Custo será "real" ou "modelo"
+
+            dados_compilados = [
+                {
+                    "tipo_custo": "custo_fixo",
+                    "valor": custo_fixo_real,
+                    "Tp_Custo": "real",
+                },
+                {
+                    "tipo_custo": "custo_fixo_equipes",
+                    "valor": custo_fixo_equipes_real,
+                    "Tp_Custo": "real",
+                },
+                # {
+                # "tipo_custo": "custo_realocacao_equipes",
+                # "valor": custo_realocacao_equipes_real,
+                # "Tp_Custo": "real",
+                # },
+                # {
+                #  "tipo_custo": "custo_contratacao_equipes",
+                #  "valor": custo_contratacao_equipes_real,
+                # "Tp_Custo": "real",
+                # },
+                {
+                    "tipo_custo": "custo_abertura_unidades",
+                    "valor": custo_abertura_unidades_real,
+                    "Tp_Custo": "real",
+                },
+                {
+                    "tipo_custo": "custo_total",
+                    "valor": custo_total_real,
+                    "Tp_Custo": "real",
+                },
+                {
+                    "tipo_custo": "custo_fixo",
+                    "valor": custo_fixo_modelo,
+                    "Tp_Custo": "modelo",
+                },
+                {
+                    "tipo_custo": "custo_fixo_equipes",
+                    "valor": custo_fixo_equipes_modelo,
+                    "Tp_Custo": "modelo",
+                },
+                # {
+                #  "tipo_custo": "custo_realocacao_equipes",
+                # "valor": custo_realocacao_equipes_modelo,
+                # "Tp_Custo": "modelo",
+                # },
+                # {
+                # "tipo_custo": "custo_contratacao_equipes",
+                # "valor": custo_contratacao_equipes_modelo,
+                #  "Tp_Custo": "modelo",
+                # },
+                {
+                    "tipo_custo": "custo_abertura_unidades",
+                    "valor": custo_abertura_unidades_modelo,
+                    "Tp_Custo": "modelo",
+                },
+                {
+                    "tipo_custo": "custo_total",
+                    "valor": custo_total_modelo,
+                    "Tp_Custo": "modelo",
+                },
+            ]
+
+            df_resumo_custos_compilado = pd.DataFrame(dados_compilados)
+
+            # ============================================================================================================
+            # Extratificacao custos Equipes - Só Modelo!
+            # ============================================================================================================
+
+            df_plot = self.cenario.df_custos[
+                self.cenario.df_custos.Nivel.isin(["ESF", "ESB", "ENASF"])
+            ].copy()
+            df_plot["Equipe"] = df_plot.Nivel.apply(refact__equipes_name_to_plot)
+            df_plot["custo_total"] = round(df_plot.Valor_R / 1000000, 3)
+            df_plot_end = df_plot[["Equipe", "custo_total", "Tipo_Custo"]]
+
+            # Criar gráfico com 3 subplots
+            self.cria_grafico_custos_comparativo(
+                df_plot_comp_custos_total_equipes,
+                df_resumo_custos_compilado,
+                df_plot_end,
+            )
+
+        def cria_grafico_custos_comparativo(
+            self,
+            df_plot_comp_custos_total_equipes,
+            df_resumo_custos_compilado,
+            df_plot_end,
+        ):
+            """
+            Cria gráfico com 3 subplots comparando custos entre modelo e real
+            """
+            import plotly.graph_objects as go
+            from plotly.subplots import make_subplots
+
+            # Definir cores consistentes
+            cores = {
+                "real": "#1f77b4",  # Azul
+                "modelo": "#7f7f7f",  # Cinza
+                "Real": "#1f77b4",  # Azul (com R maiúsculo)
+                "Modelo": "#7f7f7f",  # Cinza (com M maiúsculo)
+            }
+
+            # Criar subplots: 1 grande em cima, 2 menores embaixo
+            fig = make_subplots(
+                rows=2,
+                cols=1,
+                subplot_titles=(
+                    "Comparação de Custos por Categoria (Real vs Modelo)",
+                    "Comparação de Custos por Equipe (Real vs Modelo)",
+                ),
+                specs=[
+                    [{"type": "bar"}],
+                    [{"type": "bar"}],
+                ],
+                vertical_spacing=0.25,
+                horizontal_spacing=0.12,
+            )
+
+            # ============================================================================================================
+            # GRÁFICO 1: df_resumo_custos_compilado (maior, em cima)
+            # ============================================================================================================
+
+            # Filtrar dados por tipo de custo
+            for tp_custo in df_resumo_custos_compilado["Tp_Custo"].unique():
+                df_filtrado = df_resumo_custos_compilado[
+                    df_resumo_custos_compilado["Tp_Custo"] == tp_custo
+                ]
+
+                fig.add_trace(
+                    go.Bar(
+                        x=df_filtrado["tipo_custo"],
+                        y=df_filtrado["valor"],
+                        name=f"Custos {tp_custo.title()}",
+                        marker_color=cores[tp_custo],
+                        text=df_filtrado["valor"].apply(lambda x: f"{x:.3f}"),
+                        textposition="outside",
+                        showlegend=True,
+                    ),
+                    row=1,
+                    col=1,
+                )
+
+            # ============================================================================================================
+            # GRÁFICO 2: df_plot_comp_custos_total_equipes (esquerda embaixo)
+            # ============================================================================================================
+
+            for tp_custo in df_plot_comp_custos_total_equipes["Tp_custo"].unique():
+                df_filtrado = df_plot_comp_custos_total_equipes[
+                    df_plot_comp_custos_total_equipes["Tp_custo"] == tp_custo
+                ]
+
+                fig.add_trace(
+                    go.Bar(
+                        x=df_filtrado["Equipe"],
+                        y=df_filtrado["Custo Total"],
+                        name=f"Equipes {tp_custo}",
+                        marker_color=cores[tp_custo],
+                        text=df_filtrado["Custo Total"].apply(lambda x: f"{x:.3f}"),
+                        textposition="outside",
+                        showlegend=False,
+                    ),
+                    row=2,
+                    col=1,
+                )
+
+            # ============================================================================================================
+            # GRÁFICO 3: df_plot_end (direita embaixo)
+            # ============================================================================================================
+
+            # Para este gráfico, vamos usar cores diferentes para cada tipo de custo
+            # cores_tipo_custo = {
+            #     "Contratação ESF": "#ff7f0e",  # Laranja
+            #     "Realocação ESF": "#2ca02c",  # Verde
+            #     "Operação ESF": "#d62728",  # Vermelho
+            #     "Contratação ESB": "#9467bd",  # Roxo
+            #     "Realocação ESB": "#8c564b",  # Marrom
+            #     "Operação ESB": "#e377c2",  # Rosa
+            #     "Contratação ENASF": "#7f7f7f",  # Cinza
+            #     "Realocação ENASF": "#bcbd22",  # Verde amarelado
+            #     "Operação ENASF": "#17becf",  # Ciano
+            # }
+
+            # for equipe in df_plot_end["Equipe"].unique():
+            #     df_equipe = df_plot_end[df_plot_end["Equipe"] == equipe]
+
+            #     for _, row in df_equipe.iterrows():
+            #         tipo_custo = row["Tipo_Custo"]
+            #         cor = cores_tipo_custo.get(tipo_custo, "#7f7f7f")
+
+            #         fig.add_trace(
+            #             go.Bar(
+            #                 x=[equipe],
+            #                 y=[row["custo_total"]],
+            #                 name=tipo_custo,
+            #                 marker_color=cor,
+            #                 text=f"{row['custo_total']:.3f}",
+            #                 textposition="outside",
+            #                 showlegend=False,
+            #                 legendgroup=equipe,
+            #             ),
+            #             row=2,
+            #             col=2,
+            #         )
+
+            # ============================================================================================================
+            # CONFIGURAÇÃO DO LAYOUT
+            # ============================================================================================================
+
+            fig.update_layout(
+                height=1000,
+                width=1200,
+                title_text="Análise Comparativa de Custos: Real vs Modelo",
+                title_x=0.5,
+                title_font_size=16,
+                showlegend=True,
+                paper_bgcolor="#ffffff",
+                plot_bgcolor="#ffffff",
+                margin=dict(t=90, b=90, l=80, r=40),
+                legend=dict(
+                    orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5
+                ),
+                barmode="group",
+                bargap=0.2,
+            )
+
+            # Configurar eixos
+            fig.update_xaxes(title_text="Tipo de Custo", row=1, col=1)
+            fig.update_xaxes(title_text="Equipe", row=2, col=1)
+            # fig.update_xaxes(title_text="Equipe", row=2, col=2)
+
+            fig.update_yaxes(title_text="Custo (Milhões R$)", row=1, col=1)
+            fig.update_yaxes(title_text="Custo (Milhões R$)", row=2, col=1)
+            # fig.update_yaxes(title_text="Custo (Milhões R$)", row=2, col=2)
+
+            # Rotacionar labels do eixo x para melhor legibilidade
+            fig.update_xaxes(tickangle=45, row=1, col=1)
+            fig.update_xaxes(tickangle=45, row=2, col=1)
+            # fig.update_xaxes(tickangle=45, srow=2, col=2)
+
+            # Ajustes globais de traços
+            fig.update_traces(cliponaxis=False)
+
+            # Salvar o gráfico
+            fig.write_html("analise_custos_completa.html")
+            fig.write_image("analise_custos_completa.png", width=1200, height=1000)
+
+            print("Gráfico de análise de custos criado e salvo!")
+            # return fig
+
+        def analisa_cobertura_comparativa_por_ivs_2(self, tamanho_faixa=20):
+
+            print(
+                "LOGGING: INICIANDO ANÁLISE COMPARATIVA DE COBERTURA POR FAIXAS DE IVS"
+            )
+
+            # Trabalhar com cópia do dataframe
+            df = self.df_merge.copy()
+
+            # Verificar colunas necessárias
+            colunas_necessarias = {
+                "ESF": ["pop_captada_eSF", "Populacao_Atendida_ESF"],
+                "ESB": ["pop_captada_eSB", "Populacao_Atendida_ESB"],
+            }
+
+            for tipo, cols in colunas_necessarias.items():
+                for col in cols:
+                    if col not in df.columns:
+                        print(f"ERRO: Coluna '{col}' não encontrada para {tipo}!")
+                        return None, None
+
+            total_setores = len(df)
+            num_faixas = int(np.ceil(total_setores / tamanho_faixa))
+
+            # Dicionário para armazenar resultados
+            resultados_dict = {"ESF": [], "ESB": []}
+
+            # Processar cada tipo de equipe
+            for tipo_equipe in ["ESF", "ESB"]:
+                col_captada = colunas_necessarias[tipo_equipe][0]
+                col_atendida = colunas_necessarias[tipo_equipe][1]
+
+                print(f"\n{'='*60}")
+                print(f"ANÁLISE {tipo_equipe}")
+                print(f"{'='*60}")
+
+                for i in range(num_faixas):
+                    inicio_faixa = i * tamanho_faixa + 1
+                    fim_faixa = min((i + 1) * tamanho_faixa, total_setores)
+
+                    # Filtrar setores nesta faixa
+                    setores_faixa = df[
+                        (df["Posicao_Ranking_IVS"] >= inicio_faixa)
+                        & (df["Posicao_Ranking_IVS"] <= fim_faixa)
+                    ]
+
+                    # Calcular métricas
+                    total_na_faixa = len(setores_faixa)
+                    pop_captada_total = setores_faixa[col_captada].sum()
+                    pop_atendida_total = setores_faixa[col_atendida].sum()
+                    diferenca = pop_atendida_total - pop_captada_total
+                    percentual_atendimento = (
+                        (pop_atendida_total / pop_captada_total * 100)
+                        if pop_captada_total > 0
+                        else 0
+                    )
+
+                    # Setores com cobertura
+                    setores_com_captacao = (setores_faixa[col_captada] > 0).sum()
+                    setores_com_atendimento = (setores_faixa[col_atendida] > 0).sum()
+
+                    # IVS médio
+                    ivs_medio = setores_faixa["IVS"].mean()
+
+                    nivel_criticidade = (
+                        "Muito Alto"
+                        if inicio_faixa <= 20
+                        else (
+                            "Alto"
+                            if inicio_faixa <= 40
+                            else (
+                                "Médio"
+                                if inicio_faixa <= 60
+                                else "Baixo" if inicio_faixa <= 80 else "Muito Baixo"
+                            )
+                        )
+                    )
+
+                    resultados_dict[tipo_equipe].append(
+                        {
+                            "Faixa": f"{inicio_faixa}-{fim_faixa}",
+                            "Inicio_Faixa": inicio_faixa,
+                            "Fim_Faixa": fim_faixa,
+                            "Total_Setores": total_na_faixa,
+                            "Pop_Captada": pop_captada_total,
+                            "Pop_Atendida": pop_atendida_total,
+                            "Diferenca": diferenca,
+                            "Percentual_Atendimento": percentual_atendimento,
+                            "Setores_Com_Captacao": setores_com_captacao,
+                            "Setores_Com_Atendimento": setores_com_atendimento,
+                            "IVS_Medio": ivs_medio,
+                            "Nivel_Criticidade": nivel_criticidade,
+                        }
+                    )
+
+                    print(f"Faixa {inicio_faixa}-{fim_faixa} ({nivel_criticidade}):")
+                    print(
+                        f"  Pop Captada: {pop_captada_total:,.0f} | Pop Atendida: {pop_atendida_total:,.0f}"
+                    )
+                    print(
+                        f"  Diferença: {diferenca:+,.0f} ({percentual_atendimento:.1f}%)"
+                    )
+                    print(
+                        f"  Setores: {setores_com_atendimento}/{setores_com_captacao} com atendimento"
+                    )
+
+            # Converter para DataFrames
+            self.df_resultados_esf = pd.DataFrame(resultados_dict["ESF"])
+            self.df_resultados_esb = pd.DataFrame(resultados_dict["ESB"])
+
+            # Criar subplots com Plotly
+            fig = make_subplots(
+                rows=3,
+                cols=2,
+                subplot_titles=(
+                    "ESF - Atendimento Baseline vs Atendida Atendimento Modelo",
+                    "ESB - Atendimento Baseline vs Atendida Atendimento Modelo",
+                    "ESF - Diferença (Baseline - Modelo)",
+                    "ESB - Diferença (Baseline - Modelo)",
+                ),
+                vertical_spacing=0.12,
+                horizontal_spacing=0.1,
+            )
+
+            # Cores consistentes
+            cor_captada = "#4682B4"
+            cor_atendida = "#32CD32"
+            cor_deficit = "#DC143C"
+            cor_superavit = "#32CD32"
+
+            # --- GRÁFICO 1: ESF - Captada vs Atendida ---
             fig.add_trace(
                 go.Bar(
-                    x=df_temp["Tipo_Custo"],
-                    y=df_temp["Valor_Milhoes"],
-                    name=equipe,
-                    marker_color=cores[equipe],
-                    text=df_temp["Percentual"].apply(lambda x: f"{x:.1f}%"),
-                    textposition="inside",
-                    legendgroup="equipe",
+                    x=self.df_resultados_esf["Faixa"],
+                    y=self.df_resultados_esf["Pop_Captada"],
+                    name="Baseline",
+                    marker_color=cor_captada,
+                    text=self.df_resultados_esf["Pop_Captada"].apply(
+                        lambda x: f"{x:,.0f}"
+                    ),
+                    textposition="outside",
+                    legendgroup="captada",
                     showlegend=True,
                 ),
                 row=1,
                 col=1,
             )
 
-        # ============================================================================================================
-        # SUBPLOT 2: Custos totais por categoria
-        # ============================================================================================================
-
-        fig.add_trace(
-            go.Bar(
-                x=df_totais["Tipo_Custo"],
-                y=df_totais["Valor_Milhoes"],
-                marker_color="steelblue",
-                text=df_totais.apply(
-                    lambda row: f"R$ {row['Valor_Milhoes']:.2f}M<br>({row['Percentual']:.1f}%)",
-                    axis=1,
-                ),
-                textposition="outside",
-                showlegend=False,
-            ),
-            row=1,
-            col=2,
-        )
-
-        # ============================================================================================================
-        # SUBPLOT 3: Custos por tipo de despesa
-        # ============================================================================================================
-
-        fig.add_trace(
-            go.Bar(
-                x=df_por_tipo["Tipo_Custo"],
-                y=df_por_tipo["Valor_Milhoes"],
-                marker_color=["#66c2a5", "#fc8d62", "#8da0cb"],
-                text=df_por_tipo.apply(
-                    lambda row: f"R$ {row['Valor_Milhoes']:.2f}M<br>({row['Percentual']:.1f}%)",
-                    axis=1,
-                ),
-                textposition="outside",
-                showlegend=False,
-            ),
-            row=2,
-            col=1,
-        )
-
-        # ============================================================================================================
-        # SUBPLOT 4: Custos reais operacionais
-        # ============================================================================================================
-
-        fig.add_trace(
-            go.Bar(
-                x=df_custos_reais_formatado["DS_EQUIPE"],
-                y=df_custos_reais_formatado["Custo_Mensal_Milhoes"],
-                marker_color=[
-                    cores.get(x.split("-")[0].strip(), "gray")
-                    for x in df_custos_reais_formatado["DS_EQUIPE"]
-                ],
-                text=df_custos_reais_formatado.apply(
-                    lambda row: f"{int(row['Qntd_Equipes'])} eq.<br>R$ {row['Custo_Mensal_Milhoes']:.2f}M<br>({row['Percentual']:.1f}%)",
-                    axis=1,
-                ),
-                textposition="outside",
-                showlegend=False,
-            ),
-            row=2,
-            col=2,
-        )
-
-        # ============================================================================================================
-        # SUBPLOT 5: Pizza - Distribuição percentual
-        # ============================================================================================================
-
-        fig.add_trace(
-            go.Pie(
-                labels=df_totais["Tipo_Custo"],
-                values=df_totais["Valor_Milhoes"],
-                hole=0.4,
-                marker=dict(colors=["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728"]),
-                textinfo="label+percent",
-                textposition="outside",
-                showlegend=False,
-            ),
-            row=3,
-            col=1,
-        )
-
-        # ============================================================================================================
-        # SUBPLOT 6: Resumo - Custo total
-        # ============================================================================================================
-
-        df_resumo = custos_equipe_modelo[
-            custos_equipe_modelo["Tipo_Custo"] == "CUSTO TOTAL"
-        ].copy()
-        custo_total = df_resumo["Valor_R"].values[0] / 1e6
-
-        # Breakdown dos principais componentes
-        componentes = [
-            "Total Contratação",
-            "Total Realocação",
-            "Total Operação",
-            "Total Infraestrutura",
-        ]
-        df_breakdown = custos_equipe_modelo[
-            custos_equipe_modelo["Tipo_Custo"].isin(componentes)
-        ].copy()
-        df_breakdown["Valor_Milhoes"] = df_breakdown["Valor_R"] / 1e6
-
-        fig.add_trace(
-            go.Bar(
-                x=df_breakdown["Tipo_Custo"].str.replace("Total ", ""),
-                y=df_breakdown["Valor_Milhoes"],
-                marker_color=["#e74c3c", "#f39c12", "#3498db", "#95a5a6"],
-                text=df_breakdown["Percentual"].apply(lambda x: f"{x:.1f}%"),
-                textposition="outside",
-                showlegend=False,
-            ),
-            row=3,
-            col=2,
-        )
-
-        # ============================================================================================================
-        # FORMATAÇÃO GLOBAL
-        # ============================================================================================================
-
-        fig.update_xaxes(tickangle=-45, showgrid=False)
-        fig.update_yaxes(
-            title_text="Valor (Milhões R$)", showgrid=True, gridcolor="lightgray"
-        )
-
-        fig.update_layout(
-            height=1400,
-            width=1600,
-            title_text=f"<b>Análise de Custos do Sistema de Saúde - Custo Total: R$ {custo_total:.2f} Milhões</b>",
-            title_x=0.5,
-            title_font_size=20,
-            showlegend=True,
-            legend=dict(
-                orientation="h",
-                yanchor="top",
-                y=1.02,
-                xanchor="center",
-                x=0.25,
-                title="Tipo de Equipe",
-            ),
-            plot_bgcolor="white",
-            paper_bgcolor="white",
-            font=dict(family="Arial, sans-serif", size=10, color="black"),
-            barmode="stack",  # Para o gráfico empilhado
-        )
-
-        # Atualizar grid para todos os eixos
-        fig.update_xaxes(showline=True, linewidth=1, linecolor="lightgray", mirror=True)
-        fig.update_yaxes(showline=True, linewidth=1, linecolor="lightgray", mirror=True)
-
-        fig.show()
-        fig.write_html("analise_custos_completa.html")
-        # Salvar (opcional)
-        # fig.write_html("analise_custos_completa.html")
-        fig.write_image("analise_custos_completa.png", width=1600, height=1400, scale=2)
-        # populacao ponderada por IVS coberta por Esf, Esb,
-        # Total coberto
-        # Porcentagem
-        #
-
-        ### COMPARACAO COM REAL####
-        # Preparar dados para comparação Modelo vs Real
-        df_modelo_operacional = custos_equipe_modelo[
-            custos_equipe_modelo["Tipo_Custo"].isin(
-                ["Operação ESF", "Operação ESB", "Operação ENASF"]
-            )
-        ].copy()
-        df_modelo_operacional["Valor_Milhoes"] = df_modelo_operacional["Valor_R"] / 1e6
-        df_modelo_operacional["Tipo_Equipe"] = df_modelo_operacional[
-            "Tipo_Custo"
-        ].str.replace("Operação ", "")
-
-        # Preparar custos reais
-        df_real_comp = df_custos_reais_formatado.copy()
-        df_real_comp["Tipo_Equipe"] = (
-            df_real_comp["DS_EQUIPE"].str.split("-").str[0].str.strip()
-        )
-
-        # Criar dataframe de comparação
-        comparacao_data = []
-        for equipe in ["ESF", "ESB", "ENASF"]:
-            custo_modelo = df_modelo_operacional[
-                df_modelo_operacional["Tipo_Equipe"] == equipe
-            ]["Valor_Milhoes"].values
-            custo_modelo = custo_modelo[0] if len(custo_modelo) > 0 else 0
-
-            custo_real = df_real_comp[df_real_comp["Tipo_Equipe"] == equipe][
-                "Custo_Mensal_Milhoes"
-            ].values
-            custo_real = custo_real[0] if len(custo_real) > 0 else 0
-
-            comparacao_data.append(
-                {
-                    "Tipo_Equipe": equipe,
-                    "Custo_Modelo": custo_modelo,
-                    "Custo_Real": custo_real,
-                    "Diferenca": custo_modelo - custo_real,
-                    "Diferenca_Percentual": (
-                        ((custo_modelo - custo_real) / custo_real * 100)
-                        if custo_real > 0
-                        else 0
+            fig.add_trace(
+                go.Bar(
+                    x=self.df_resultados_esf["Faixa"],
+                    y=self.df_resultados_esf["Pop_Atendida"],
+                    name="Modelo",
+                    marker_color=cor_atendida,
+                    text=self.df_resultados_esf["Pop_Atendida"].apply(
+                        lambda x: f"{x:,.0f}"
                     ),
+                    textposition="outside",
+                    legendgroup="atendida",
+                    showlegend=True,
+                ),
+                row=1,
+                col=1,
+            )
+
+            # --- GRÁFICO 2: ESB - Captada vs Atendida ---
+            fig.add_trace(
+                go.Bar(
+                    x=self.df_resultados_esb["Faixa"],
+                    y=self.df_resultados_esb["Pop_Captada"],
+                    name="Baseline",
+                    marker_color=cor_captada,
+                    text=self.df_resultados_esb["Pop_Captada"].apply(
+                        lambda x: f"{x:,.0f}"
+                    ),
+                    textposition="outside",
+                    legendgroup="captada",
+                    showlegend=False,
+                ),
+                row=1,
+                col=2,
+            )
+
+            fig.add_trace(
+                go.Bar(
+                    x=self.df_resultados_esb["Faixa"],
+                    y=self.df_resultados_esb["Pop_Atendida"],
+                    name="Modelo",
+                    marker_color=cor_atendida,
+                    text=self.df_resultados_esb["Pop_Atendida"].apply(
+                        lambda x: f"{x:,.0f}"
+                    ),
+                    textposition="outside",
+                    legendgroup="atendida",
+                    showlegend=False,
+                ),
+                row=1,
+                col=2,
+            )
+
+            # --- GRÁFICO 3: ESF - Diferença ---
+            cores_diff_esf = [
+                cor_superavit if x >= 0 else cor_deficit
+                for x in self.df_resultados_esf["Diferenca"]
+            ]
+            fig.add_trace(
+                go.Bar(
+                    x=self.df_resultados_esf["Faixa"],
+                    y=self.df_resultados_esf["Diferenca"],
+                    name="Diferença",
+                    marker_color=cores_diff_esf,
+                    text=self.df_resultados_esf["Diferenca"].apply(
+                        lambda x: f"{x:+,.0f}"
+                    ),
+                    textposition="outside",
+                    showlegend=False,
+                ),
+                row=2,
+                col=1,
+            )
+
+            # Linha zero
+            fig.add_hline(
+                y=0, line_dash="dash", line_color="black", opacity=0.5, row=2, col=1
+            )
+
+            # --- GRÁFICO 4: ESB - Diferença ---
+            cores_diff_esb = [
+                cor_superavit if x >= 0 else cor_deficit
+                for x in self.df_resultados_esb["Diferenca"]
+            ]
+            fig.add_trace(
+                go.Bar(
+                    x=self.df_resultados_esb["Faixa"],
+                    y=self.df_resultados_esb["Diferenca"],
+                    name="Diferença",
+                    marker_color=cores_diff_esb,
+                    text=self.df_resultados_esb["Diferenca"].apply(
+                        lambda x: f"{x:+,.0f}"
+                    ),
+                    textposition="outside",
+                    showlegend=False,
+                ),
+                row=2,
+                col=2,
+            )
+
+            fig.add_hline(
+                y=0, line_dash="dash", line_color="black", opacity=0.5, row=2, col=2
+            )
+
+            # --- GRÁFICO 5: ESF - Percentual ---
+            # Atualizar layout
+            fig.update_xaxes(
+                title_text="Faixas de Ranking De Vulnerabilidade (1 = Mais Vulnerável)",
+                row=3,
+                col=1,
+            )
+            fig.update_xaxes(
+                title_text="Faixas de Ranking De Vulnerabilidade (1 = Mais Vulnerável)",
+                row=3,
+                col=2,
+            )
+
+            fig.update_yaxes(title_text="População", row=1, col=1)
+            fig.update_yaxes(title_text="População", row=1, col=2)
+            fig.update_yaxes(title_text="Diferença (pessoas)", row=2, col=1)
+            fig.update_yaxes(title_text="Diferença (pessoas)", row=2, col=2)
+            fig.update_yaxes(title_text="Percentual (%)", row=3, col=1)
+            fig.update_yaxes(title_text="Percentual (%)", row=3, col=2)
+
+            fig.update_layout(
+                height=1200,
+                width=1400,
+                title_text="Análise Comparativa: Baseline vs Atendimento Modelo por Faixas de Ranking de Viabilidade (TopSis)",
+                title_x=0.5,
+                showlegend=True,
+                legend=dict(
+                    orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5
+                ),
+                barmode="group",
+            )
+
+            # Resumo final
+            print("\n" + "=" * 80)
+            print("RESUMO COMPARATIVO GERAL")
+            print("=" * 80)
+
+            # Salvar os dados do resumo comparativo em um DataFrame
+            resumo_comparativo = []
+
+            for tipo_equipe in ["ESF", "ESB"]:
+                df_res = resultados_dict[tipo_equipe]
+                total_captada = sum([r["Pop_Captada"] for r in df_res])
+                total_atendida = sum([r["Pop_Atendida"] for r in df_res])
+                diff_total = total_atendida - total_captada
+                percentual = (
+                    (total_atendida / total_captada * 100) if total_captada > 0 else 0
+                )
+
+                print(f"\n{tipo_equipe}:")
+                print(f"  Total Captado: {total_captada:,.0f} pessoas")
+                print(f"  Total Atendido: {total_atendida:,.0f} pessoas")
+                print(f"  Diferença: {diff_total:+,.0f} ({percentual:.1f}%)")
+
+                resumo_dados = {
+                    "Tipo_Equipe": tipo_equipe,
+                    "Total_Captado": total_captada,
+                    "Total_Atendido": total_atendida,
+                    "Diferenca_Total": diff_total,
+                    "Percentual_Atendido_sobre_Captado": percentual,
+                    "Top_Faixa_Captado": None,
+                    "Top_Faixa_Atendido": None,
+                    "Top_Faixa_Diferenca": None,
+                    "Faixa_Top": None,
                 }
-            )
 
-        df_comparacao = pd.DataFrame(comparacao_data)
-
-        # ============================================================================================================
-        # CRIAR FIGURE COM SUBPLOTS
-        # ============================================================================================================
-
-        fig = make_subplots(
-            rows=3,
-            cols=2,
-            subplot_titles=(
-                "Custos Operacionais: Modelo vs Real (Mensal)",
-                "Diferença entre Modelo e Real",
-                "Custos Totais por Categoria (Modelo)",
-                "Custos por Tipo de Despesa (Modelo)",
-                "Distribuição Percentual dos Custos",
-                "Resumo: Breakdown do Custo Total",
-            ),
-            specs=[
-                [{"type": "bar"}, {"type": "bar"}],
-                [{"type": "bar"}, {"type": "bar"}],
-                [{"type": "pie"}, {"type": "bar"}],
-            ],
-            vertical_spacing=0.12,
-            horizontal_spacing=0.10,
-        )
-
-        cores = {"ESF": "#1f77b4", "ESB": "#ff7f0e", "ENASF": "#2ca02c"}
-
-        # ============================================================================================================
-        # SUBPLOT 1: Comparação Modelo vs Real (barras agrupadas)
-        # ============================================================================================================
-
-        fig.add_trace(
-            go.Bar(
-                x=df_comparacao["Tipo_Equipe"],
-                y=df_comparacao["Custo_Modelo"],
-                name="Custo Modelo",
-                marker_color="#3498db",
-                text=df_comparacao["Custo_Modelo"].apply(lambda x: f"R$ {x:.2f}M"),
-                textposition="outside",
-                legendgroup="comparacao",
-                showlegend=True,
-            ),
-            row=1,
-            col=1,
-        )
-
-        fig.add_trace(
-            go.Bar(
-                x=df_comparacao["Tipo_Equipe"],
-                y=df_comparacao["Custo_Real"],
-                name="Custo Real",
-                marker_color="#e74c3c",
-                text=df_comparacao["Custo_Real"].apply(lambda x: f"R$ {x:.2f}M"),
-                textposition="outside",
-                legendgroup="comparacao",
-                showlegend=True,
-            ),
-            row=1,
-            col=1,
-        )
-
-        # ============================================================================================================
-        # SUBPLOT 2: Diferença entre Modelo e Real
-        # ============================================================================================================
-
-        cores_diff = [
-            "#27ae60" if x >= 0 else "#e74c3c" for x in df_comparacao["Diferenca"]
-        ]
-
-        fig.add_trace(
-            go.Bar(
-                x=df_comparacao["Tipo_Equipe"],
-                y=df_comparacao["Diferenca"],
-                marker_color=cores_diff,
-                text=df_comparacao.apply(
-                    lambda row: f"R$ {row['Diferenca']:.2f}M<br>({row['Diferenca_Percentual']:+.1f}%)",
-                    axis=1,
-                ),
-                textposition="outside",
-                showlegend=False,
-            ),
-            row=1,
-            col=2,
-        )
-
-        # Adicionar linha zero
-        fig.add_hline(y=0, line_dash="dash", line_color="gray", row=1, col=2)
-
-        # ============================================================================================================
-        # SUBPLOT 3: Custos totais por categoria
-        # ============================================================================================================
-
-        fig.add_trace(
-            go.Bar(
-                x=df_totais["Tipo_Custo"],
-                y=df_totais["Valor_Milhoes"],
-                marker_color="steelblue",
-                text=df_totais.apply(
-                    lambda row: f"R$ {row['Valor_Milhoes']:.2f}M<br>({row['Percentual']:.1f}%)",
-                    axis=1,
-                ),
-                textposition="outside",
-                showlegend=False,
-            ),
-            row=2,
-            col=1,
-        )
-
-        # ============================================================================================================
-        # SUBPLOT 4: Custos por tipo de despesa
-        # ============================================================================================================
-
-        fig.add_trace(
-            go.Bar(
-                x=df_por_tipo["Tipo_Custo"],
-                y=df_por_tipo["Valor_Milhoes"],
-                marker_color=["#66c2a5", "#fc8d62", "#8da0cb"],
-                text=df_por_tipo.apply(
-                    lambda row: f"R$ {row['Valor_Milhoes']:.2f}M<br>({row['Percentual']:.1f}%)",
-                    axis=1,
-                ),
-                textposition="outside",
-                showlegend=False,
-            ),
-            row=2,
-            col=2,
-        )
-
-        # ============================================================================================================
-        # SUBPLOT 5: Pizza - Distribuição percentual
-        # ============================================================================================================
-
-        fig.add_trace(
-            go.Pie(
-                labels=df_totais["Tipo_Custo"],
-                values=df_totais["Valor_Milhoes"],
-                hole=0.4,
-                marker=dict(colors=["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728"]),
-                textinfo="label+percent",
-                textposition="outside",
-                showlegend=False,
-            ),
-            row=3,
-            col=1,
-        )
-
-        # ============================================================================================================
-        # SUBPLOT 6: Breakdown do custo total
-        # ============================================================================================================
-        custos_equipe_real = self.baseline.custo_equipes_real
-        custos_equipe_modelo = self.cenario.df_custos
-
-        componentes = [
-            "Total Contratação",
-            "Total Realocação",
-            "Total Operação",
-            "Total Infraestrutura",
-        ]
-        df_breakdown = custos_equipe_modelo[
-            custos_equipe_modelo["Tipo_Custo"].isin(componentes)
-        ].copy()
-        df_breakdown["Valor_Milhoes"] = df_breakdown["Valor_R"] / 1e6
-
-        fig.add_trace(
-            go.Bar(
-                x=df_breakdown["Tipo_Custo"].str.replace("Total ", ""),
-                y=df_breakdown["Valor_Milhoes"],
-                marker_color=["#e74c3c", "#f39c12", "#3498db", "#95a5a6"],
-                text=df_breakdown["Percentual"].apply(lambda x: f"{x:.1f}%"),
-                textposition="outside",
-                showlegend=False,
-            ),
-            row=3,
-            col=2,
-        )
-
-        # ============================================================================================================
-        # FORMATAÇÃO GLOBAL
-        # ============================================================================================================
-
-        df_resumo = custos_equipe_modelo[
-            custos_equipe_modelo["Tipo_Custo"] == "CUSTO TOTAL"
-        ].copy()
-        custo_total = df_resumo["Valor_R"].values[0] / 1e6
-
-        fig.update_xaxes(tickangle=-45, showgrid=False)
-        fig.update_yaxes(
-            title_text="Valor (Milhões R$)", showgrid=True, gridcolor="lightgray"
-        )
-
-        # Ajustar título do eixo Y no subplot 2 (diferença)
-        fig.update_yaxes(title_text="Diferença (Milhões R$)", row=1, col=2)
-
-        fig.update_layout(
-            height=1400,
-            width=1600,
-            title_text=f"<b>Análise Comparativa de Custos - Modelo vs Real | Custo Total Modelo: R$ {custo_total:.2f} Milhões</b>",
-            title_x=0.5,
-            title_font_size=18,
-            showlegend=True,
-            legend=dict(
-                orientation="h", yanchor="top", y=1.02, xanchor="center", x=0.25
-            ),
-            plot_bgcolor="white",
-            paper_bgcolor="white",
-            font=dict(family="Arial, sans-serif", size=10, color="black"),
-            barmode="group",
-        )
-
-        fig.update_xaxes(showline=True, linewidth=1, linecolor="lightgray", mirror=True)
-        fig.update_yaxes(showline=True, linewidth=1, linecolor="lightgray", mirror=True)
-
-        fig.show()
-
-        # Imprimir resumo da comparação
-        print("\n=== RESUMO DA COMPARAÇÃO MODELO vs REAL ===")
-        print(df_comparacao.to_string(index=False))
-        print(f"\nDiferença Total: R$ {df_comparacao['Diferenca'].sum():.2f} Milhões")
-
-    def analisa_cobertura_comparativa_por_ivs_2(self, tamanho_faixa=20):
-
-        print("LOGGING: INICIANDO ANÁLISE COMPARATIVA DE COBERTURA POR FAIXAS DE IVS")
-
-        # Trabalhar com cópia do dataframe
-        df = self.df_merge.copy()
-
-        # Verificar colunas necessárias
-        colunas_necessarias = {
-            "ESF": ["pop_captada_eSF", "Populacao_Atendida_ESF"],
-            "ESB": ["pop_captada_eSB", "Populacao_Atendida_ESB"],
-        }
-
-        for tipo, cols in colunas_necessarias.items():
-            for col in cols:
-                if col not in df.columns:
-                    print(f"ERRO: Coluna '{col}' não encontrada para {tipo}!")
-                    return None, None
-
-        total_setores = len(df)
-        num_faixas = int(np.ceil(total_setores / tamanho_faixa))
-
-        # Dicionário para armazenar resultados
-        resultados_dict = {"ESF": [], "ESB": []}
-
-        # Processar cada tipo de equipe
-        for tipo_equipe in ["ESF", "ESB"]:
-            col_captada = colunas_necessarias[tipo_equipe][0]
-            col_atendida = colunas_necessarias[tipo_equipe][1]
-
-            print(f"\n{'='*60}")
-            print(f"ANÁLISE {tipo_equipe}")
-            print(f"{'='*60}")
-
-            for i in range(num_faixas):
-                inicio_faixa = i * tamanho_faixa + 1
-                fim_faixa = min((i + 1) * tamanho_faixa, total_setores)
-
-                # Filtrar setores nesta faixa
-                setores_faixa = df[
-                    (df["Posicao_Ranking_IVS"] >= inicio_faixa)
-                    & (df["Posicao_Ranking_IVS"] <= fim_faixa)
-                ]
-
-                # Calcular métricas
-                total_na_faixa = len(setores_faixa)
-                pop_captada_total = setores_faixa[col_captada].sum()
-                pop_atendida_total = setores_faixa[col_atendida].sum()
-                diferenca = pop_atendida_total - pop_captada_total
-                percentual_atendimento = (
-                    (pop_atendida_total / pop_captada_total * 100)
-                    if pop_captada_total > 0
-                    else 0
-                )
-
-                # Setores com cobertura
-                setores_com_captacao = (setores_faixa[col_captada] > 0).sum()
-                setores_com_atendimento = (setores_faixa[col_atendida] > 0).sum()
-
-                # IVS médio
-                ivs_medio = setores_faixa["IVS"].mean()
-
-                nivel_criticidade = (
-                    "Muito Alto"
-                    if inicio_faixa <= 20
-                    else (
-                        "Alto"
-                        if inicio_faixa <= 40
-                        else (
-                            "Médio"
-                            if inicio_faixa <= 60
-                            else "Baixo" if inicio_faixa <= 80 else "Muito Baixo"
-                        )
+                # Top mais vulneráveis
+                if len(df_res) > 0:
+                    top_capt = df_res[0]["Pop_Captada"]
+                    top_atend = df_res[0]["Pop_Atendida"]
+                    top_diff = top_atend - top_capt
+                    print(f"  Top {tamanho_faixa} mais vulneráveis:")
+                    print(
+                        f"    Captado: {top_capt:,.0f} | Atendido: {top_atend:,.0f} | "
+                        f"Diferença: {top_diff:+,.0f}"
                     )
-                )
+                    resumo_dados.update(
+                        {
+                            "Top_Faixa_Captado": top_capt,
+                            "Top_Faixa_Atendido": top_atend,
+                            "Top_Faixa_Diferenca": top_diff,
+                            "Faixa_Top": tamanho_faixa,
+                        }
+                    )
+                resumo_comparativo.append(resumo_dados)
 
-                resultados_dict[tipo_equipe].append(
-                    {
-                        "Faixa": f"{inicio_faixa}-{fim_faixa}",
-                        "Inicio_Faixa": inicio_faixa,
-                        "Fim_Faixa": fim_faixa,
-                        "Total_Setores": total_na_faixa,
-                        "Pop_Captada": pop_captada_total,
-                        "Pop_Atendida": pop_atendida_total,
-                        "Diferenca": diferenca,
-                        "Percentual_Atendimento": percentual_atendimento,
-                        "Setores_Com_Captacao": setores_com_captacao,
-                        "Setores_Com_Atendimento": setores_com_atendimento,
-                        "IVS_Medio": ivs_medio,
-                        "Nivel_Criticidade": nivel_criticidade,
-                    }
-                )
+            self.df_resumo_comparativo_por_faixa = pd.DataFrame(resumo_comparativo)
 
-                print(f"Faixa {inicio_faixa}-{fim_faixa} ({nivel_criticidade}):")
-                print(
-                    f"  Pop Captada: {pop_captada_total:,.0f} | Pop Atendida: {pop_atendida_total:,.0f}"
-                )
-                print(f"  Diferença: {diferenca:+,.0f} ({percentual_atendimento:.1f}%)")
-                print(
-                    f"  Setores: {setores_com_atendimento}/{setores_com_captacao} com atendimento"
-                )
+            # fig.show()
+            fig.write_html("comparacao_cobertura_custos_reais.html")
+            fig.write_image("comparacao_cobertura.png", width=1400, height=1200)
 
-        # Converter para DataFrames
-        df_resultados_esf = pd.DataFrame(resultados_dict["ESF"])
-        df_resultados_esb = pd.DataFrame(resultados_dict["ESB"])
+            # return fig, {"ESF": df_resultados_esf, "ESB": df_resultados_esb}
 
-        # Criar subplots com Plotly
-        fig = make_subplots(
-            rows=3,
-            cols=2,
-            subplot_titles=(
-                "ESF - Atendimento Baseline vs Atendida Atendimento Modelo",
-                "ESB - Atendimento Baseline vs Atendida Atendimento Modelo",
-                "ESF - Diferença (Baseline - Modelo)",
-                "ESB - Diferença (Baseline - Modelo)",
-            ),
-            vertical_spacing=0.12,
-            horizontal_spacing=0.1,
-        )
-
-        # Cores consistentes
-        cor_captada = "#4682B4"
-        cor_atendida = "#32CD32"
-        cor_deficit = "#DC143C"
-        cor_superavit = "#32CD32"
-
-        # --- GRÁFICO 1: ESF - Captada vs Atendida ---
-        fig.add_trace(
-            go.Bar(
-                x=df_resultados_esf["Faixa"],
-                y=df_resultados_esf["Pop_Captada"],
-                name="Baseline",
-                marker_color=cor_captada,
-                text=df_resultados_esf["Pop_Captada"].apply(lambda x: f"{x:,.0f}"),
-                textposition="outside",
-                legendgroup="captada",
-                showlegend=True,
-            ),
-            row=1,
-            col=1,
-        )
-
-        fig.add_trace(
-            go.Bar(
-                x=df_resultados_esf["Faixa"],
-                y=df_resultados_esf["Pop_Atendida"],
-                name="Modelo",
-                marker_color=cor_atendida,
-                text=df_resultados_esf["Pop_Atendida"].apply(lambda x: f"{x:,.0f}"),
-                textposition="outside",
-                legendgroup="atendida",
-                showlegend=True,
-            ),
-            row=1,
-            col=1,
-        )
-
-        # --- GRÁFICO 2: ESB - Captada vs Atendida ---
-        fig.add_trace(
-            go.Bar(
-                x=df_resultados_esb["Faixa"],
-                y=df_resultados_esb["Pop_Captada"],
-                name="Baseline",
-                marker_color=cor_captada,
-                text=df_resultados_esb["Pop_Captada"].apply(lambda x: f"{x:,.0f}"),
-                textposition="outside",
-                legendgroup="captada",
-                showlegend=False,
-            ),
-            row=1,
-            col=2,
-        )
-
-        fig.add_trace(
-            go.Bar(
-                x=df_resultados_esb["Faixa"],
-                y=df_resultados_esb["Pop_Atendida"],
-                name="Modelo",
-                marker_color=cor_atendida,
-                text=df_resultados_esb["Pop_Atendida"].apply(lambda x: f"{x:,.0f}"),
-                textposition="outside",
-                legendgroup="atendida",
-                showlegend=False,
-            ),
-            row=1,
-            col=2,
-        )
-
-        # --- GRÁFICO 3: ESF - Diferença ---
-        cores_diff_esf = [
-            cor_superavit if x >= 0 else cor_deficit
-            for x in df_resultados_esf["Diferenca"]
-        ]
-        fig.add_trace(
-            go.Bar(
-                x=df_resultados_esf["Faixa"],
-                y=df_resultados_esf["Diferenca"],
-                name="Diferença",
-                marker_color=cores_diff_esf,
-                text=df_resultados_esf["Diferenca"].apply(lambda x: f"{x:+,.0f}"),
-                textposition="outside",
-                showlegend=False,
-            ),
-            row=2,
-            col=1,
-        )
-
-        # Linha zero
-        fig.add_hline(
-            y=0, line_dash="dash", line_color="black", opacity=0.5, row=2, col=1
-        )
-
-        # --- GRÁFICO 4: ESB - Diferença ---
-        cores_diff_esb = [
-            cor_superavit if x >= 0 else cor_deficit
-            for x in df_resultados_esb["Diferenca"]
-        ]
-        fig.add_trace(
-            go.Bar(
-                x=df_resultados_esb["Faixa"],
-                y=df_resultados_esb["Diferenca"],
-                name="Diferença",
-                marker_color=cores_diff_esb,
-                text=df_resultados_esb["Diferenca"].apply(lambda x: f"{x:+,.0f}"),
-                textposition="outside",
-                showlegend=False,
-            ),
-            row=2,
-            col=2,
-        )
-
-        fig.add_hline(
-            y=0, line_dash="dash", line_color="black", opacity=0.5, row=2, col=2
-        )
-
-        # --- GRÁFICO 5: ESF - Percentual ---
-        # Atualizar layout
-        fig.update_xaxes(
-            title_text="Faixas de Ranking De Vulnerabilidade (1 = Mais Vulnerável)",
-            row=3,
-            col=1,
-        )
-        fig.update_xaxes(
-            title_text="Faixas de Ranking De Vulnerabilidade (1 = Mais Vulnerável)",
-            row=3,
-            col=2,
-        )
-
-        fig.update_yaxes(title_text="População", row=1, col=1)
-        fig.update_yaxes(title_text="População", row=1, col=2)
-        fig.update_yaxes(title_text="Diferença (pessoas)", row=2, col=1)
-        fig.update_yaxes(title_text="Diferença (pessoas)", row=2, col=2)
-        fig.update_yaxes(title_text="Percentual (%)", row=3, col=1)
-        fig.update_yaxes(title_text="Percentual (%)", row=3, col=2)
-
-        fig.update_layout(
-            height=1200,
-            width=1400,
-            title_text="Análise Comparativa: Baseline vs Atendimento Modelo por Faixas de Ranking de Viabilidade (TopSis)",
-            title_x=0.5,
-            showlegend=True,
-            legend=dict(
-                orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5
-            ),
-            barmode="group",
-        )
-
-        # Resumo final
-        print("\n" + "=" * 80)
-        print("RESUMO COMPARATIVO GERAL")
-        print("=" * 80)
-
-        for tipo_equipe in ["ESF", "ESB"]:
-            df_res = resultados_dict[tipo_equipe]
-            total_captada = sum([r["Pop_Captada"] for r in df_res])
-            total_atendida = sum([r["Pop_Atendida"] for r in df_res])
-            diff_total = total_atendida - total_captada
-
-            print(f"\n{tipo_equipe}:")
-            print(f"  Total Captado: {total_captada:,.0f} pessoas")
-            print(f"  Total Atendido: {total_atendida:,.0f} pessoas")
-            print(
-                f"  Diferença: {diff_total:+,.0f} ({(total_atendida/total_captada*100) if total_captada > 0 else 0:.1f}%)"
-            )
-
-            # Top 20
-            if len(df_res) > 0:
-                top_capt = df_res[0]["Pop_Captada"]
-                top_atend = df_res[0]["Pop_Atendida"]
-                print(f"  Top {tamanho_faixa} mais vulneráveis:")
-                print(
-                    f"    Captado: {top_capt:,.0f} | Atendido: {top_atend:,.0f} | "
-                    f"Diferença: {(top_atend-top_capt):+,.0f}"
-                )
-
-        return fig, {"ESF": df_resultados_esf, "ESB": df_resultados_esb}
-
-    def compara_fluxo_emulti(self):
-        # TODO: Implementar comparação de fluxo emulti
-        pass
+        def compara_fluxo_emulti(self):
+            # TODO: Implementar comparação de fluxo emulti
+            pass
 
 
 def main():
-    path_cenario = r"C:\Users\marce\OneDrive\Área de Trabalho\MestradoHierarquico\Resultados_COBERTURA_MAXIMA_34_END.xlsx"
+    path_cenario = r"C:\Users\marce\OneDrive\Área de Trabalho\MestradoHierarquico\Resultados_COBERTURA_MAXIMA_raio_1_5_KM_CUSTOS_FINAL_CAPACITADO_REST_CRIACAO.xlsx"
+    # path_cenario = r"C:\Users\marce\OneDrive\Área de Trabalho\MestradoHierarquico\Resultados_COBERTURA_MAXIMA_raio_8_KM_CUSTOS_FINAL.xlsx"
     path_baseline = r"C:\Users\marce\OneDrive\Área de Trabalho\MestradoHierarquico\resultados_Baseline_DataSus_Cobertura_por_equipes_v2.xlsx"
+    # analise_cen = AnaliseCenario(path_cenario=path_cenario)
+    # map, _ = analise_cen.plota_fluxo_pacientes(fundo_ivs=False)
+    # basic_map.save("map_fluxo_Emulti_2.html")
+    # map_emulti = analise_cen.plota_fluxo_Emulti()
+    # map_fluxo_pacientes, _ = analise_cen.plota_fluxo_pacientes_secundario_terciario()
+
+    # map.save("map_fluxo_pacientes_10.html")
+
     comparador_cenario = ComparaResultadoBaseline(
         path_cenario=path_cenario, path_baseline=path_baseline
     )
-    # comparador_cenario.analises(tamanho_faixa=50)
+    comparador_cenario.analises(tamanho_faixa=50)
     # comparador_cenario.fluxo_emulti()
 
     # Salvar gráfico

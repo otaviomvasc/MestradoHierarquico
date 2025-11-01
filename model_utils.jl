@@ -1,4 +1,4 @@
-using DataFrames, HTTP
+using DataFrames, HTTP, XLSX
 
 function create_model_indices(mun_data::MunicipalityData)::ModelIndices
     # Calcular quantidades
@@ -269,7 +269,6 @@ function get_real_distance(c1::Tuple{Float64, Float64}, c2::Tuple{Float64, Float
 end
 
 
-
 function real_distance_n1_v2(coords_origem::Vector{Tuple{Float64, Float64}}, coords_destino::Vector{Tuple{Float64, Float64}}, data::HealthcareData, mun_data::MunicipalityData )
     mun_data.Setor_Censitario
     coords_origem = coords_n1
@@ -283,12 +282,29 @@ function real_distance_n1_v2(coords_origem::Vector{Tuple{Float64, Float64}}, coo
 
     # Dentro do loop, dentro do if na linha 290, atribui o valor i,j a dist_vd
     # Isso será feito mais abaixo, mas deixamos a matriz pronta aqui.
-    #i = 15 j = 900!
+    #i = 117 j = 1
+    # Salva a matriz de distâncias num arquivo Excel
+    #try
+        #using XLSX
+    #catch
+        #@warn "Pacote XLSX não encontrado, salvando como CSV em vez disso."
+        #using DelimitedFiles
+        #writedlm("matriz_distancias_ate_indice_38.csv", matriz_distancias, ',')
+    #else
+        # Salva matriz_distancias em Excel conforme sugerido
+        #nomes_colunas = ["Col_" * string(j) for j in 1:size(matriz_distancias,2)]
+        #minha_matriz = matriz_distancias
+        #XLSX.openxlsx("dist_inst_reais_ate_i_117.xlsx", mode="w") do xf
+           # sheet = xf["Sheet1"] # Seleciona a primeira planilha
+            # XLSX.writetable! espera um iterável de colunas; para matriz use eachcol
+            #XLSX.writetable!(sheet, collect(eachcol(minha_matriz)), nomes_colunas, anchor_cell=XLSX.CellRef("A1"))
+        #end
+    #end
 
-    for i in eachindex(coords_origem)
+    for i in 79:150
         for j in eachindex(coords_destino)
             println("Buscando distancias para indice $i e $j")
-        if i == j || matriz_distancias[i, j] != 0
+        if i == j #|| matriz_distancias[i, j] != 0
             #Ja esta salvo como zero!
             continue
         end
@@ -388,10 +404,16 @@ function calculate_distance_matrices(mun_data::MunicipalityData, indices::ModelI
     path_json = "dados_PRONTOS_para_modelo_OTM\\Contagem_matrix_results_full_matrix.json"
 
 
-    Matriz_Dist_Emulti = [get_real_distance(c1, c2, data, mun_data) for c1 in coords_n1, c2 in coords_n1]
-    Matriz_Dist_n1 = [get_real_distance(c1, c2, data, mun_data) for c1 in coords_demanda, c2 in coords_n1]
-    Matriz_Dist_n2 = [get_real_distance(c1, c2, data, mun_data) for c1 in coords_n1, c2 in coords_n2]
-    Matriz_Dist_n3 = [get_real_distance(c1, c2, data, mun_data) for c1 in coords_n2, c2 in coords_n3]
+    #Matriz_Dist_Emulti = [get_real_distance(c1, c2, data, mun_data) for c1 in coords_n1, c2 in coords_n1]
+    #Matriz_Dist_n1 = [get_real_distance(c1, c2, data, mun_data) for c1 in coords_demanda, c2 in coords_n1]
+   #Matriz_Dist_n2 = [get_real_distance(c1, c2, data, mun_data) for c1 in coords_n1, c2 in coords_n2]
+    #Matriz_Dist_n3 = [get_real_distance(c1, c2, data, mun_data) for c1 in coords_n2, c2 in coords_n3]
+
+
+    Matriz_Dist_Emulti = [vincenty_distance(c1, c2) for c1 in coords_n1, c2 in coords_n1]
+    Matriz_Dist_n1 = [vincenty_distance(c1, c2) for c1 in coords_demanda, c2 in coords_n1]
+    Matriz_Dist_n2 = [vincenty_distance(c1, c2) for c1 in coords_n1, c2 in coords_n2]
+    Matriz_Dist_n3 = [vincenty_distance(c1, c2) for c1 in coords_n2, c2 in coords_n3]
     
     
     return Matriz_Dist(Matriz_Dist_n1, 
@@ -655,6 +677,7 @@ function create_model_parameters(mun_data::MunicipalityData, data::HealthcareDat
     capacidade_n3, custo_n3,
     matriz_cap_n1, matriz_cap_n2, matriz_cap_n3 = calculate_equipment_parameters(mun_data, data)
     IVS = mun_data.IVS
+    capacidade = [row.total_equipes for row in eachrow(mun_data.unidades_n1)]
 
     return ModelParameters(
         capacidade_n1,
@@ -670,7 +693,8 @@ function create_model_parameters(mun_data::MunicipalityData, data::HealthcareDat
         dominios_model, 
         IVS,
         3000000.0,  # orcamento_maximo - valor padrão
-        10.0        # ponderador_Vulnerabilidade - valor padrão
+        10.0 ,
+        capacidade       # ponderador_Vulnerabilidade - valor padrão
     )
 end
 

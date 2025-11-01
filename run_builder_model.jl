@@ -19,7 +19,7 @@ function example_usage()
     mun_data = filter_municipality_data(data, municipio)
     
     #TODOs: Deixar mais facil a definicao dos rais criticos!
-    mun_data.constantes.raio_maximo_n1 = 1.5
+    mun_data.constantes.raio_maximo_n1 = 8
     #mun_data.constantes.raio_maximo_n2 = 20.0
     #mun_data.constantes.raio_maximo_n3 = 50.0
 
@@ -29,18 +29,9 @@ function example_usage()
     
     # Exporta o campo data.matrix_api para um arquivo JSON externo se ele existir
     
-    if hasproperty(data, :matrix_api)
-        output_json_path = joinpath(data_path, "matrix_api_export.json")
-        open(output_json_path, "w") do f
-            JSON.print(f, data.matrix_api)
-        end
-        println("Exportado data.matrix_api para: ", output_json_path)
-    else
-        println("Campo data.matrix_api não encontrado, nada foi exportado.")
-    end
     # Configurar parâmetros específicos do cenário
     println("Configurando parâmetros do cenário...")
-    parameters.orcamento_maximo = 12617000
+    parameters.orcamento_maximo = 21591350
     parameters.ponderador_Vulnerabilidade = 1
 
     println("Criando modelo de cobertura máxima")
@@ -50,8 +41,8 @@ function example_usage()
 
     set_optimizer_attribute(model, "primal_feasibility_tolerance", 1e-4)
     set_optimizer_attribute(model, "dual_feasibility_tolerance", 1e-4)
-    set_optimizer_attribute(model, "time_limit", 3600.0)
-    set_optimizer_attribute(model, "mip_rel_gap", 0.05)
+    set_optimizer_attribute(model, "time_limit", 3700.0)
+    set_optimizer_attribute(model, "mip_rel_gap", 0.001)
 
     optimize!(model)
     
@@ -102,7 +93,7 @@ function example_usage()
 
         
        # Exportar para Excel
-        filename = "Resultados_COBERTURA_MAXIMA_35_END_CUSTOS_ATT.xlsx"
+        filename = "Resultados_COBERTURA_MAXIMA_raio_8_KM_CUSTOS_FINAL_CAPACITADO_REST_CRIACAO.xlsx"
         df_results = export_population_results_to_excel(population_results, filename)
         
         # Adicionar dados do fluxo de equipes (novo formato) ao mesmo arquivo Excel

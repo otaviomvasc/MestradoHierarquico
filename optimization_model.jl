@@ -829,7 +829,7 @@ function extract_aloc_esf_emulti(model_emulti::Model, indices_model_emulti::Indi
     return DataFrame(
         "Indice_ESF" => idx_esf,
         "Indice_Emulti" => idx_emulti,
-        "Valor" => valores,
+        #"Valor" => valores,
         "cnes_eq_esf" => cnes_eq_esf,
         "ubs_origem_esf" => ubs_origem_esf,
         "lat_origem_esf" => lat_origem_esf,
@@ -1705,7 +1705,9 @@ function create_optimization_model_maximal_coverage_fluxo_equipes(indices::Model
     S_origem_equipes_ENASF = indices.S_origem_equipes_ENASF
     mt_emulti = parameters.S_Matriz_Dist.Matriz_Dist_Emulti
     dominio_UBS_Emulti = Dict(ubs_orig => [ubs_dest for ubs_dest in S_n1 if mt_emulti[ubs_orig, ubs_dest] <= 5] for ubs_orig in S_n1)
+    S_capacidade_unidades_primarias = [i == 1 ? i + 1 : i for i in parameters.S_capacidade_unidades_primarias]
 
+    
     n2_mais_proximo = Dict{Int, Int}()
     for n1 in S_n1
         if !isempty(dominio_atr_n2[n1])
@@ -1721,6 +1723,7 @@ function create_optimization_model_maximal_coverage_fluxo_equipes(indices::Model
     end
 
 
+    
 
     cap_equipes_n1 = 3000
 
@@ -1823,10 +1826,6 @@ function create_optimization_model_maximal_coverage_fluxo_equipes(indices::Model
     9 * (sum(eq_ENASF_n1[eq, n1] for eq in S_Equipes_ENASF, n1 in S_n1) + sum(eq_enasf_criadas[n1] for n1 in S_n1)))
     
 
-     # ============================================================================================================
-    # SUGESTAO GROK PARA INFEASIBILITY
-    # ============================================================================================================
-    #@constraint(model, territorialization[d in S_Pontos_Demanda], sum(Aloc_[d, n1] for n1 in dominio_atr_n1[d]) <= 1)
     # ============================================================================================================
     # ALOCACAO ESF E ESB
     # ============================================================================================================
@@ -1841,9 +1840,56 @@ function create_optimization_model_maximal_coverage_fluxo_equipes(indices::Model
     @constraint(model, [n1 in S_n1], sum(var_pop_atendida[d, 2, n1] for d in S_Pontos_Demanda if n1 in dominio_atr_n1[d]) 
             <= (sum(eq_ESB_n1[eq, n1] for eq in S_Equipes_ESB) + eq_ESB_criadas[n1]) * 3000)
 
+    
+    # ============================================================================================================
+    # CAPACIDADE DAS UBS!
+    # ============================================================================================================
+    #S_capacidade_unidades_primarias, S_instalacoes_reais_n1, S_locais_candidatos_n1
+    #JEITO ANTIGO
+    #@constraint(model, [n1 in S_n1], sum(eq_ESF_n1[eq, n1]  for eq in S_Equipes_ESF) + eq_ESF_criadas[n1] <= 4)
+    
+    #JEITO Novo
+    @constraint(model, [n1 in S_instalacoes_reais_n1], sum(eq_ESF_n1[eq, n1]  for eq in S_Equipes_ESF) + eq_ESF_criadas[n1] 
+    + sum(eq_ESB_n1[eq, n1]  for eq in S_Equipes_ESB) + eq_ESB_criadas[n1]
+    + sum(eq_ENASF_n1[eq, n1] for eq in S_Equipes_ENASF) + eq_enasf_criadas[n1] <= S_capacidade_unidades_primarias[n1])
+    
 
-    @constraint(model, [n1 in S_n1], sum(eq_ESF_n1[eq, n1]  for eq in S_Equipes_ESF) + eq_ESF_criadas[n1] <= 4)
+    @constraint(model, [n1 in S_locais_candidatos_n1], sum(eq_ESF_n1[eq, n1]  for eq in S_Equipes_ESF) + eq_ESF_criadas[n1] 
+    + sum(eq_ESB_n1[eq, n1]  for eq in S_Equipes_ESB) + eq_ESB_criadas[n1]
+    + sum(eq_ENASF_n1[eq, n1] for eq in S_Equipes_ENASF) + eq_enasf_criadas[n1] <= 11)
 
+    
+
+    
+    # ============================================================================================================
+    # Restricao de so abrir novas equipes se todas as equipes reais forem realocadas.
+    # ============================================================================================================
+    
+    
+    S_qntd_real_ESF = length(S_Equipes_ESF)
+    S_qntd_real_ESB = length(S_Equipes_ESB)
+    S_qntd_real_Enasf = length(S_Equipes_ENASF)
+    @variable(model, libera_criacao_ESF, Bin)
+    @variable(model, libera_criacao_ESB, Bin)
+    @variable(model, libera_criacao_ENASF, Bin)
+    #eq_ESF_criadas, eq_ESB_criadas, eq_enasf_criadas
+
+    @constraint(model, sum(eq_ESF_n1[eq, n1] for eq in S_Equipes_ESF, n1 in S_n1) >= S_qntd_real_ESF * libera_criacao_ESF)
+    @constraint(model, sum(eq_ESF_criadas[un] for un in S_n1) <= libera_criacao_ESF * 300)
+
+
+    @constraint(model, sum(eq_ESB_n1[eq, n1] for eq in S_Equipes_ESB, n1 in S_n1) >= S_qntd_real_ESB * libera_criacao_ESB)
+    @constraint(model, sum(eq_ESB_criadas[un] for un in S_n1) <= libera_criacao_ESB * 1000)
+
+    
+    @constraint(model, sum(eq_ENASF_n1[eq, n1] for eq in S_Equipes_ENASF, n1 in S_n1) >= S_qntd_real_Enasf * libera_criacao_ENASF)
+    @constraint(model, sum(eq_enasf_criadas[un] for un in S_n1) <= libera_criacao_ENASF * 50)
+
+
+
+    # ============================================================================================================
+    # CONTINUACAO MODELO
+    # ============================================================================================================
 
     @constraint(model, [n1 in S_n1], 
     sum(eq_ESB_n1[eq, n1] for eq in S_Equipes_ESB) + eq_ESB_criadas[n1]  
@@ -1876,8 +1922,8 @@ function create_optimization_model_maximal_coverage_fluxo_equipes(indices::Model
 
 
 
-    @expression(model, custo_fixo, sum(Abr_n1[n1] * 1500 for n1 in S_n1))
-    @expression(model, custo_abertura, sum(Abr_n1[n1] * 10000 for n1 in S_locais_candidatos_n1))
+    @expression(model, custo_fixo, sum(Abr_n1[n1] * 122775 for n1 in S_n1))
+    @expression(model, custo_abertura, sum(Abr_n1[n1] * 21949 for n1 in S_locais_candidatos_n1))
     
 
     @expression(model, custo_contratacao, custo_contratacao_equipes_esf + custo_contratacao_equipes_esb + custo_contratacao_equipes_enasf)
@@ -1886,8 +1932,8 @@ function create_optimization_model_maximal_coverage_fluxo_equipes(indices::Model
 
 
     @expression(model, custo_total, 
-    custo_contratacao
-    + custo_realocaca_equipes 
+    #custo_contratacao
+    #+ custo_realocaca_equipes 
     + custo_mensal_equipes
     + custo_fixo
     + custo_abertura

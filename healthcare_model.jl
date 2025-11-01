@@ -130,6 +130,7 @@ mutable struct ModelParameters
     IVS::Vector{Float64}
     orcamento_maximo::Float64
     ponderador_Vulnerabilidade::Float64
+    S_capacidade_unidades_primarias::Vector{Int64}
 end
 
 
@@ -180,21 +181,56 @@ function filter_municipality_data(data::HealthcareData, municipio::String)::Muni
     S_cnes_primario_referencia_real = [row["UBS_ref"] for row in eachrow(df_m)]
     IVS = [row["IVS"] for row in eachrow(df_m)]
     df_eqps_v2 = data.df_equipes_primario_v2[data.df_equipes_primario_v2.NO_MUNICIPIO .== muncipio_upper, :]
+    df_eqps_v2 = filter(row -> row.TP_EQUIPE in [70, 73, 76, 71, 72], df_eqps_v2)
+    df_eqps_v2.classificacao_final = [
+        row.TP_EQUIPE in (70, 73, 76) ? "eSF" :
+        row.TP_EQUIPE == 71 ? "eSB" :
+        row.TP_EQUIPE == 72 ? "eMulti" :
+        missing
+        for row in eachrow(df_eqps_v2)
+    ]
+    # Calcular, para cada CO_CNES, quantos TP_EQUIPE diferentes existem no df_eqps_v2
+    # Agrupa por CO_CNES e conta o número total de linhas TP_EQUIPE por CNES (sem deduplicar)
+    # Agrupar por CO_CNES e calcular o número de equipes de cada tipo por CNES
+    equipes_por_cnes = combine(groupby(df_eqps_v2, :CO_CNES)) do sdf
+        n_eSF = count(row -> row.TP_EQUIPE in (70, 73, 76), eachrow(sdf))
+        n_eSB = count(row -> row.TP_EQUIPE == 71, eachrow(sdf))
+        n_eMulti = count(row -> row.TP_EQUIPE == 72, eachrow(sdf))
+        (; n_eSF, n_eSB, n_eMulti)
+    end
+    # Renomeia as colunas conforme pedido (assumindo que TP_EQUIPE só tem 70, 71, 72 possíveis)
 
     ##TODO: ATENCAO: Rodar modelo primeiro com ESF e depois voltar para fazer a parte de equipe Bucal!
     eqs_ESF = [70, 73, 76]
     eq_ESB  = [71]
     eq_NASF = [72]
 
+
     # Filtra as equipes ESF ativas
     equipes_ESF_filtradas = filter(row -> row.TP_EQUIPE in eqs_ESF && row.ST_ATIVA == 1 && row.ST_EQUIPE_VALIDA == "S", df_eqps_v2)
     equipes_ESB_filtradas = filter(row -> row.TP_EQUIPE in eq_ESB && row.ST_ATIVA == 1  && row.ST_EQUIPE_VALIDA == "S", df_eqps_v2)
     equipes_EMULTI_filtradas = filter(row -> row.TP_EQUIPE in eq_NASF && row.ST_ATIVA == 1  && row.ST_EQUIPE_VALIDA == "S", df_eqps_v2 )
     # Faz o groupby por CO_CNES e conta a quantidade de CO_EQUIPE por CNES
+    df_unidades_primario =  data.df_ins_prim[data.df_ins_prim.municipio_nome .== muncipio_upper, :]
+    # Realizar o merge do df_unidades_primario com equipes_por_cnes (left join)
+    df_unidades_primario_merged = leftjoin(
+        df_unidades_primario,
+        equipes_por_cnes,
+        on = :cnes => :CO_CNES
+    )
 
-
+    # Substituir valores missing por zero nas colunas provenientes de equipes_por_cnes
+    for col in [:n_eSF, :n_eSB, :n_eMulti]
+        if hasproperty(df_unidades_primario_merged, col)
+            replace!(df_unidades_primario_merged[!, col], missing => 0)
+        end
+    end
     # Quando coletar valores de demanda
+    df_unidades_primario_merged.total_equipes = df_unidades_primario_merged.n_eSF .+ df_unidades_primario_merged.n_eSB .+ df_unidades_primario_merged.n_eMulti
 
+    # Mostrar o CNES das unidades que têm total_equipes igual a zero
+    # Remover as unidades com total de equipes igual a zero
+    df_unidades_primario_merged = filter(row -> row.total_equipes > 0, df_unidades_primario_merged)
     # Definição das constantes do modelo - Dados que precisamos melhorar!.
     raio_maximo_n1 = 3
     raio_maximo_n2 = 30
@@ -237,7 +273,7 @@ function filter_municipality_data(data::HealthcareData, municipio::String)::Muni
         S_Valor_Demanda,
         c_coords,
         S_cnes_primario_referencia_real,
-        data.df_ins_prim[data.df_ins_prim.municipio_nome .== muncipio_upper, :],
+        df_unidades_primario_merged,
         data.df_ins_sec[data.df_ins_sec.municipio_nome .== muncipio_upper, :],
         data.df_ins_ter[data.df_ins_ter.municipio_nome .== muncipio_upper, :],
         data.df_equipes_primario[data.df_equipes_primario.municipio .== muncipio_upper, :],
