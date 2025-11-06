@@ -91,680 +91,6 @@ classe que recebe dois arquivos excel
 """
 
 
-# TODO: Ja pensar em multiplos resultados com baseline!
-class AnaliseCenarioOLD:
-    def __init__(self, path_baseline, dicts_resultados_otimizacao):
-        self.baseline = pd.read_excel(path_baseline)
-        self.dfs_otm_cobertura = dict()
-        self.dfs_otm_fluxo_equipes = dict()
-        self.dfs_otm_custos = dict()
-        self.df_abertura_equipes = dict()
-        self.dados_unidades = pd.read_excel(
-            r"C:\Users\marce\OneDrive\Área de Trabalho\MestradoHierarquico\dados_PRONTOS_para_modelo_OTM\instalacoes_primarias.xlsx"
-        )
-        for cen, path in dicts_resultados_otimizacao.items():
-            self.dfs_otm_cobertura[cen] = pd.read_excel(path, sheet_name="Sheet1")
-            self.dfs_otm_fluxo_equipes[cen] = pd.read_excel(
-                path, sheet_name="Fluxo_Equipes"
-            )
-
-            # self.dfs_otm_custos[cen] = pd.read_excel(path, sheet_name="Custos")
-            self.df_abertura_equipes[cen] = pd.read_excel(
-                path, sheet_name="Equipes_Criadas"
-            )
-
-        self.merge_dados_cobertura()
-        self.lat_long_contagem = (-19.9321, -44.0539)
-
-    def calcula_cobertura_total(self):
-
-        self.coberturas_totais = dict()
-        self.coberturas_totais["baseline"] = round(
-            (self.baseline.populacao_ajustada.sum() / self.baseline.populacao.sum())
-            * 100,
-            2,
-        )
-        print(f"Cobertura baseline: {self.coberturas_totais['baseline']}%")
-        for cen in self.dfs_otm_cobertura.keys():
-            cobertura_modelo = round(
-                (
-                    self.dfs_otm_cobertura[cen].Populacao_Atendida.sum()
-                    / self.dfs_otm_cobertura[cen].Populacao_Total.sum()
-                )
-                * 100,
-                2,
-            )
-            self.coberturas_totais[cen] = cobertura_modelo
-            print(f"Cobertura {cen}: {cobertura_modelo}%")
-
-    def quantidade_setores_com_maior_cobertura(self):
-        cols_compare = [
-            i for i in self.df_merge if "Populacao_Atendida_Resultados" in i
-        ]
-        col_compare_baseline = "populacao_ajustada"
-        self.quantidade_setores_modelo_ganha_baseline = dict()
-        for cl in cols_compare:
-            result_compare = (
-                self.df_merge[cl] < self.df_merge[col_compare_baseline]
-            ).value_counts()  # True significa que modelo é menor - logo precisamos do false!
-            self.quantidade_setores_modelo_ganha_baseline[cl] = result_compare[False]
-            print(
-                f"Modelo {cl} foi igual ou semelhante ao baseline em {result_compare[False]} e foi pior em {result_compare[True]}"
-            )
-
-    def merge_dados_cobertura(self):
-        """
-        mergeia df cobertura com df baseline para conseguir comparar as coberturas por setor censitario
-        """
-        df_baseline = self.baseline[
-            ["id_setor", "populacao_ajustada", "populacao", "geometry"]
-        ].copy()
-        for cen, df in self.dfs_otm_cobertura.items():
-            # TODO: Nao era melhor trazer os dados do baseline para cada cenario ?
-            df["id_setor"] = df.Setor.apply(lambda x: np.int64(x[:-1]))
-            df_aux = df.copy()
-            df_aux.rename(
-                columns={i: f"{i}_{cen}" for i in df_aux.columns}, inplace=True
-            )
-            df_baseline = df_baseline.merge(
-                df_aux, left_on="id_setor", right_on=f"id_setor_{cen}", how="left"
-            )
-            print(f"Shape do df_baseline pos merge = {df_baseline.shape}")
-        self.df_merge = df_baseline.copy()
-
-    def resumo_cnes_fluxos(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Gera um resumo por CNES com:
-        - quantidade_equipes_origem: contagem de linhas de Origem_Equipe por CNES de origem
-        - quantidade_equipes_destino: soma de Valor_Variavel por CNES de destino
-
-        Retorna um DataFrame com colunas: ['cnes', 'quantidade_equipes_origem', 'quantidade_equipes_destino'].
-        """
-
-        def fix_cnes_candidatos(ubs_destino, indice_ubs, valor_v):
-            if ubs_destino == 0 and valor_v > 0:
-                return indice_ubs  # Setor censitario candidato que foi aberto!
-            return ubs_destino
-
-        df["cnes_UBS_destino"] = df.apply(
-            lambda x: fix_cnes_candidatos(
-                x.cnes_UBS_destino, x.Indice_UBS, x.Valor_Variavel
-            ),
-            axis=1,
-        )
-        cols_lower = {c: c.lower() for c in df.columns}
-        # Detecta colunas CNES de origem e destino de forma robusta a variações de nome
-        origem_cnes_col = next(
-            (
-                c
-                for c in df.columns
-                if ("cnes" in cols_lower[c] and "orig" in cols_lower[c])
-            ),
-            None,
-        )
-        destino_cnes_col = next(
-            (
-                c
-                for c in df.columns
-                if ("cnes" in cols_lower[c] and "dest" in cols_lower[c])
-            ),
-            None,
-        )
-        if origem_cnes_col is None:
-            raise KeyError(
-                "Coluna de CNES de origem não encontrada (ex.: 'cnes_ubs_origem')."
-            )
-        if destino_cnes_col is None:
-            raise KeyError(
-                "Coluna de CNES de destino não encontrada (ex.: 'cnes_UBS_destino')."
-            )
-
-        if "Origem_Equipe" not in df.columns:
-            raise KeyError("Coluna 'Origem_Equipe' não encontrada no DataFrame.")
-        if "Valor_Variavel" not in df.columns:
-            raise KeyError("Coluna 'Valor_Variavel' não encontrada no DataFrame.")
-
-        origem_counts = (
-            df.groupby(origem_cnes_col)["Origem_Equipe"].count().reset_index()
-        )
-        origem_counts = origem_counts.rename(
-            columns={
-                origem_cnes_col: "cnes",
-                "Origem_Equipe": "quantidade_equipes_origem",
-            }
-        )
-
-        destino_sums = (
-            df.groupby(destino_cnes_col)["Valor_Variavel"].sum().reset_index()
-        )
-        destino_sums = destino_sums.rename(
-            columns={
-                destino_cnes_col: "cnes",
-                "Valor_Variavel": "quantidade_equipes_destino",
-            }
-        )
-
-        resumo = origem_counts.merge(destino_sums, on="cnes", how="outer").fillna(0)
-        # Tipos
-        resumo["quantidade_equipes_origem"] = resumo[
-            "quantidade_equipes_origem"
-        ].astype(int)
-        # Mantém destino como float para suportar somas fracionárias caso existam
-        return resumo.sort_values("cnes").reset_index(drop=True)
-
-    def plota_mapa_base_setores(
-        self,
-        cen,
-        incluir_ubs=True,
-        cor_setor="#1f77b4",
-        mostrar_ivs=False,
-        ivs_palette="Reds",
-        marca_setores=False,
-    ):
-        """
-        Constrói um mapa base com os pontos dos setores censitários (e opcionalmente UBS).
-
-        - cen: nome do cenário para ler colunas Lat_Demanda_{cen}, Lon_Demanda_{cen}
-               e (opcionalmente) Lat_UBS_{cen}, Lon_UBS_{cen}.
-        - incluir_ubs: se True, adiciona marcadores das UBS (pretos) por cima.
-        - cor_setor: cor dos pontos dos setores.
-        - mostrar_ivs: se True, adiciona um fundo coroplético pelo IVS.
-        - ivs_palette: paleta para o IVS (ex.: "Reds").
-
-        Retorna: folium.Map
-        """
-        cols_base = ["id_setor", "geometry"]
-        cols_plot = [i for i in self.df_merge.columns if cen in i or i in cols_base]
-        resultado = self.df_merge[cols_plot].copy()
-        if not isinstance(resultado, gpd.GeoDataFrame):
-            resultado = gpd.GeoDataFrame(
-                resultado,
-                geometry=(
-                    gpd.GeoSeries.from_wkt(resultado["geometry"])
-                    if resultado["geometry"].dtype == "O"
-                    else resultado["geometry"]
-                ),
-            )
-
-        mapa_base = folium.Map(
-            location=[self.lat_long_contagem[0], self.lat_long_contagem[1]],
-            tiles="cartodbpositron",
-            control_scale=True,
-            prefer_canvas=True,
-            zoom_start=11,
-        )
-
-        # Panes para controlar ordem de sobreposição
-        folium.map.CustomPane(name="ubs_top", z_index=650).add_to(mapa_base)
-        folium.map.CustomPane(name="demanda_mid", z_index=635).add_to(mapa_base)
-
-        # Camadas
-        ubs_layer = folium.FeatureGroup(name="Unidades de saúde")
-        demanda_layer = folium.FeatureGroup(name="Setores (pontos)")
-
-        # Fundo coroplético do IVS (opcional)
-        if mostrar_ivs:
-            col_ivs = (
-                f"IVS_{cen}"
-                if f"IVS_{cen}" in resultado.columns
-                else ("IVS" if "IVS" in resultado.columns else None)
-            )
-            if col_ivs is not None:
-                resultado_choropleth = resultado[["geometry", col_ivs]].copy()
-                if not isinstance(resultado_choropleth, gpd.GeoDataFrame):
-                    resultado_choropleth = gpd.GeoDataFrame(
-                        resultado_choropleth,
-                        geometry=(
-                            gpd.GeoSeries.from_wkt(resultado_choropleth["geometry"])
-                            if resultado_choropleth["geometry"].dtype == "O"
-                            else resultado_choropleth["geometry"]
-                        ),
-                    )
-                resultado_choropleth = resultado_choropleth.reset_index(drop=True)
-                resultado_choropleth["id"] = resultado_choropleth.index
-                if not resultado_choropleth.crs:
-                    resultado_choropleth.set_crs(epsg=4326, inplace=True)
-                elif resultado_choropleth.crs.to_epsg() != 4326:
-                    resultado_choropleth = resultado_choropleth.to_crs(epsg=4326)
-
-                min_val = float(resultado_choropleth[col_ivs].min())
-                max_val = float(resultado_choropleth[col_ivs].max())
-                quantis = [
-                    0.05,
-                    0.1,
-                    0.15,
-                    0.2,
-                    0.25,
-                    0.30,
-                    0.35,
-                    0.4,
-                    0.45,
-                    0.5,
-                    0.55,
-                    0.6,
-                    0.65,
-                    0.7,
-                    0.75,
-                    0.8,
-                    0.85,
-                    0.9,
-                    0.95,
-                ]
-                bins = (
-                    [min_val]
-                    + list(resultado_choropleth[col_ivs].quantile(quantis))
-                    + [max_val]
-                )
-                bins = sorted(list(set(bins)))
-
-                folium.Choropleth(
-                    geo_data=resultado_choropleth,
-                    name="IVS (fundo)",
-                    data=resultado_choropleth,
-                    columns=["id", col_ivs],
-                    key_on="feature.id",
-                    fill_color=ivs_palette,
-                    fill_opacity=0.6,
-                    line_opacity=0.3,
-                    line_color="black",
-                    line_weight=0.5,
-                    smooth_factor=0.8,
-                    nan_fill_color="LightGray",
-                    legend_name="Índice de Vulnerabilidade (IVS)",
-                    bins=bins,
-                ).add_to(mapa_base)
-        for _, row in resultado.iterrows():
-            # Coordenadas demanda
-            lat_dem = row.get(f"Lat_Demanda_{cen}")
-            lon_dem = row.get(f"Lon_Demanda_{cen}")
-            if pd.isna(lon_dem):
-                lon_dem = row.get(f"Long_Demanda_{cen}")
-            if marca_setores:
-                if pd.notna(lat_dem) and pd.notna(lon_dem):
-                    folium.CircleMarker(
-                        location=[lat_dem, lon_dem],
-                        radius=2,
-                        color=cor_setor,
-                        fill=True,
-                        fill_color=cor_setor,
-                        fill_opacity=0.9,
-                        opacity=0.9,
-                        weight=0,
-                        pane="demanda_mid",
-                    ).add_to(demanda_layer)
-
-            if incluir_ubs:
-                lat_ubs = row.get(f"Lat_UBS_{cen}")
-                lon_ubs = row.get(f"Lon_UBS_{cen}")
-                if pd.isna(lon_ubs):
-                    lon_ubs = row.get(f"Long_UBS_{cen}")
-                if pd.notna(lat_ubs) and pd.notna(lon_ubs):
-                    folium.CircleMarker(
-                        location=[lat_ubs, lon_ubs],
-                        radius=4,
-                        color="#000000",
-                        fill=True,
-                        fill_color="#000000",
-                        fill_opacity=1.0,
-                        opacity=1.0,
-                        weight=0,
-                        pane="ubs_top",
-                        tooltip=row.get(f"UBS_Alocada_{cen}"),
-                    ).add_to(ubs_layer)
-
-        # Adiciona as camadas
-        demanda_layer.add_to(mapa_base)
-        if incluir_ubs:
-            ubs_layer.add_to(mapa_base)
-
-        folium.LayerControl().add_to(mapa_base)
-        return mapa_base
-
-    def plota_mapa_cobertura_OTM(self, cen):
-        # Reaproveita o mapa base com setores e UBS
-        map = self.plota_mapa_base_setores(cen=cen, incluir_ubs=True)
-
-        # Precisamos novamente do GeoDataFrame filtrado para coroplético/linhas
-        cols_base = ["id_setor", "geometry"]
-        cols_plot = [i for i in self.df_merge.columns if cen in i or i in cols_base]
-        resultado = self.df_merge[cols_plot].copy()
-        if not isinstance(resultado, gpd.GeoDataFrame):
-            resultado = gpd.GeoDataFrame(
-                resultado,
-                geometry=(
-                    gpd.GeoSeries.from_wkt(resultado["geometry"])
-                    if resultado["geometry"].dtype == "O"
-                    else resultado["geometry"]
-                ),
-            )
-
-        # Pane e camada para ligações (demanda → UBS)
-        folium.map.CustomPane(name="links_mid", z_index=640).add_to(map)
-        ligacao_layer = folium.FeatureGroup(name="Ligação Demanda → UBS")
-
-        for index, cnes in resultado.iterrows():
-            try:
-                lat_ubs = cnes.get(f"Lat_UBS_{cen}")
-                lon_ubs = cnes.get(f"Lon_UBS_{cen}")
-                if pd.isna(lon_ubs):
-                    lon_ubs = cnes.get(f"Long_UBS_{cen}")
-
-                lat_dem = cnes.get(f"Lat_Demanda_{cen}")
-                lon_dem = cnes.get(f"Lon_Demanda_{cen}")
-                if pd.isna(lon_dem):
-                    lon_dem = cnes.get(f"Long_Demanda_{cen}")
-
-                if (
-                    pd.notna(lat_dem)
-                    and pd.notna(lon_dem)
-                    and pd.notna(lat_ubs)
-                    and pd.notna(lon_ubs)
-                ):
-                    folium.PolyLine(
-                        locations=[[lat_dem, lon_dem], [lat_ubs, lon_ubs]],
-                        color="#2c7fb8",
-                        weight=1.6,
-                        opacity=0.8,
-                        dash_array="3,2",
-                        pane="links_mid",
-                    ).add_to(ligacao_layer)
-            except Exception as e:
-                print(f"Erro ao processar linha {index}: {e}")
-                continue
-
-        # cria os estabelecimentos
-        resultado_choropleth = resultado.copy()
-        resultado_choropleth = resultado_choropleth.reset_index()
-        resultado_choropleth["id_setor"] = resultado_choropleth.index
-        # O formato atual está incorreto: falta uma vírgula entre f"UBS_Alocada_{cen}" e f"IVS_{cen}",
-        # O correto é:
-        cols_indices_to_plot = [
-            f"Populacao_Total_{cen}",
-            f"Populacao_Atendida_{cen}",
-            f"UBS_Alocada_{cen}",
-            f"IVS_{cen}",
-        ]
-
-        # Corrige o erro adicionando a coluna 'id' ao DataFrame
-        resultado_choropleth["id"] = resultado_choropleth.index
-
-        # Certifique-se de que o GeoDataFrame tem um CRS definido (WGS84)
-        if not resultado_choropleth.crs:
-            resultado_choropleth.set_crs(epsg=4326, inplace=True)
-        elif resultado_choropleth.crs.to_epsg() != 4326:
-            resultado_choropleth = resultado_choropleth.to_crs(epsg=4326)
-
-        folium.Choropleth(
-            geo_data=resultado_choropleth,
-            name=f"Populacao_Atendida_{cen}",
-            data=resultado_choropleth,
-            columns=["id", f"Populacao_Atendida_{cen}"],
-            key_on="feature.id",
-            fill_color="Reds",  # Mudando para vermelho para maior contraste
-            fill_opacity=0.9,  # Aumentando opacidade
-            line_opacity=0.7,  # Aumentando opacidade das bordas
-            line_color="black",
-            line_weight=1.0,  # Aumentando espessura das bordas
-            smooth_factor=1.0,  # Reduzindo suavização para manter detalhes
-            nan_fill_color="LightGray",  # Mudando cor para valores nulos
-            legend_name=f"Cobertura Populacao {cen}",
-            # bins=bins,  # Usando bins personalizados
-        ).add_to(map)
-
-        folium.features.GeoJson(
-            resultado_choropleth,
-            name="Informações dos setores",
-            style_function=lambda x: {
-                "color": "transparent",
-                "fillColor": "transparent",
-                "weight": 0,
-            },
-            tooltip=folium.features.GeoJsonTooltip(
-                fields=cols_indices_to_plot,
-                aliases=cols_indices_to_plot,
-                labels=True,
-                sticky=False,
-            ),
-            # z_index=450,
-            highlight_function=lambda x: {
-                "fillColor": "#ffff00",  # Amarelo para highlight
-                "color": "#000000",  # Borda preta
-                "fillOpacity": 0.7,  # Opacidade maior
-                "weight": 2.0,  # Borda mais grossa
-            },
-        ).add_to(map)
-
-        # Adiciona a camada de ligações por cima dos pontos
-        ligacao_layer.add_to(map)
-
-        # Add the marker cluster to the map
-
-        folium.LayerControl().add_to(map)
-        return map
-
-    def plota_mapa_cobertura_otimizacao(self):
-        b = 0
-
-    def plota_mapa_fluxo_equipes(self, cen):
-        df = self.dfs_otm_fluxo_equipes[cen].copy()
-        df_eq = df[df.tipo_equipe == 1].copy()
-        # Mantém apenas linhas com coordenadas válidas (Valor_Variavel pode ser nulo)
-        df = df[
-            df[
-                [
-                    "lat_origem",
-                    "long_origem",
-                    "lat_destino",
-                    "long_destino",
-                ]
-            ]
-            .notna()
-            .all(axis=1)
-        ].copy()
-
-        # Mapa base centralizado em Contagem
-        map_fluxos = folium.Map(
-            location=[self.lat_long_contagem[0], self.lat_long_contagem[1]],
-            tiles="cartodbpositron",
-            control_scale=True,
-            prefer_canvas=True,
-            zoom_start=11,
-        )
-
-        # Panes para controlar ordem de sobreposição
-        folium.map.CustomPane(name="origens_mid", z_index=635).add_to(map_fluxos)
-        folium.map.CustomPane(name="destinos_mid", z_index=636).add_to(map_fluxos)
-        folium.map.CustomPane(name="links_mid", z_index=637).add_to(map_fluxos)
-
-        # Trabalhar somente com tipo_equipe == 1 e agregar por origem
-        if "tipo_equipe" in df.columns:
-            df_eq = df[df.tipo_equipe == 1].copy()
-        else:
-            df_eq = df.copy()
-
-        if df_eq.empty:
-            folium.LayerControl(collapsed=False).add_to(map_fluxos)
-            return map_fluxos
-
-        agg_base = (
-            df_eq.groupby("Indice_UBS")
-            .agg(total_fluxo=("Valor_Variavel", "sum"))
-            .reset_index()
-        )
-        coords = (
-            df_eq.groupby("Indice_UBS")
-            .agg(lat=("lat_origem", "first"), lon=("long_origem", "first"))
-            .reset_index()
-        )
-        agg_df = agg_base.merge(coords, on="Indice_UBS", how="left")
-        agg_df["total_fluxo"] = agg_df["total_fluxo"].fillna(0.0)
-
-        eqs_inicio = (
-            df_eq.groupby(by=["Indice_equipe"])
-            .agg({"Origem_Equipe": "first"})
-            .reset_index()
-        )
-        # Tudo isso aqui so para saber quantas equipes existiam em cada CNES antes da otimizacao!
-        df_un = self.dados_unidades[
-            self.dados_unidades.municipio_nome == "CONTAGEM"
-        ].reset_index(drop=True)
-        eqs_inicio["cnes"] = eqs_inicio.Origem_Equipe.apply(
-            lambda x: (
-                df_un.cnes.iloc[x - 1]
-                if x - 1 <= len(df_un.cnes)
-                else "Local_Candidato"
-            )
-        )
-        agg_df["cnes"] = agg_df.Indice_UBS.apply(
-            lambda x: (
-                df_un.cnes.iloc[x - 1]
-                if x - 1 <= len(df_un.cnes)
-                else "Local_Candidato"
-            )
-        )
-
-        # eqs_inicio["latitude"] = eqs_inicio.Origem_Equipe.apply(lambda x: df_un.latitude.iloc[x-1] if x-1 <= len(df_un.cnes) else "Local_Candidato")
-        # eqs_inicio["longitude"] = eqs_inicio.Origem_Equipe.apply(lambda x: df_un.longitude.iloc[x-1] if x-1 <= len(df_un.cnes) else "Local_Candidato")
-        df_qntd_equipes_inicio = (
-            eqs_inicio.groupby(by="cnes").agg({"Indice_equipe": "count"}).reset_index()
-        )
-        df_qntd_equipes_inicio = df_qntd_equipes_inicio.merge(
-            df_un, on="cnes", how="left"
-        )
-        df_qntd_equipes_inicio = df_qntd_equipes_inicio.rename(
-            columns={"Indice_equipe": "Quantidade_Inicial_Equipes"}
-        )
-        df_agg_end = agg_df.merge(df_qntd_equipes_inicio, on="cnes", how="left")
-        df_agg_end["Quantidade_Inicial_Equipes"] = (
-            df_agg_end.Quantidade_Inicial_Equipes.fillna(0)
-        )
-        # Das Equipes iniciais, quantas a unidade perdeu ?
-        camada_origens = folium.FeatureGroup(name="Resumo por origem (tipo 1)")
-        for _, r in df_agg_end.iterrows():
-            lat = r["lat"]
-            lon = r["lon"]
-            if pd.isna(lat) or pd.isna(lon):
-                continue
-            try:
-                lat = float(lat)
-                lon = float(lon)
-            except Exception:
-                continue
-            if not (np.isfinite(lat) and np.isfinite(lon)):
-                continue
-
-            tooltip = (
-                f"CNES : {r['cnes']}\n"
-                f"Nome : {r['nome_fantasia']}\n"
-                f"Quantidade Inicial Equipes : {r['Quantidade_Inicial_Equipes']}\n"
-                f"Quantidade Final: {r['total_fluxo']:.2f}\n"
-            )
-            folium.CircleMarker(
-                location=[lat, lon],
-                radius=4,
-                color="#2c7fb8",
-                fill=True,
-                fill_color="#2c7fb8",
-                fill_opacity=0.9,
-                opacity=0.9,
-                weight=0,
-                pane="origens_mid",
-                tooltip=tooltip,
-            ).add_to(camada_origens)
-
-        camada_origens.add_to(map_fluxos)
-
-        folium.LayerControl(collapsed=False).add_to(map_fluxos)
-        return map_fluxos  # map_fluxos.save("map_fluxo_eq_2.html")
-
-    def plota_mapa_fluxo_equipes_v2(self, cen):
-        df = self.dfs_otm_fluxo_equipes[cen].copy()
-        # TODO: Entender porque nem todas as 205 equipes estao aqui!
-        # Mantém apenas linhas com coordenadas válidas (Valor_Variavel pode ser nulo)
-        df = df[
-            df[
-                [
-                    "lat_origem",
-                    "long_origem",
-                    "lat_destino",
-                    "long_destino",
-                ]
-            ]
-            .notna()
-            .all(axis=1)
-        ].copy()
-
-        # Mapa base centralizado em Contagem
-        map = self.plota_mapa_base_setores(cen=cen, incluir_ubs=True, mostrar_ivs=True)
-
-        # Trabalhar somente com tipo_equipe == 1 e agregar por origem
-        if "tipo_equipe" in df.columns:
-            df_eq = df[df.tipo_equipe == 1].copy()
-        else:
-            df_eq = df.copy()
-
-        if df_eq.empty:
-            folium.LayerControl(collapsed=False).add_to(map)
-            # return map
-
-        # eqs_inicio["latitude"] = eqs_inicio.Origem_Equipe.apply(lambda x: df_un.latitude.iloc[x-1] if x-1 <= len(df_un.cnes) else "Local_Candidato")
-        # eqs_inicio["longitude"] = eqs_inicio.Origem_Equipe.apply(lambda x: df_un.longitude.iloc[x-1] if x-1 <= len(df_un.cnes) else "Local_Candidato")
-
-        resumo = self.resumo_cnes_fluxos(df_eq)
-        # pegar equipes criadas!
-        # df_merge = df_eq.merge(df_eq_criadas, right_on = "Unidade_UBS", left_on = "Indice_UBS", how="outer")
-
-        # Refazer essa parte!
-        # df_eq_criadas = self.df_abertura_equipes[cen]
-        # df_cr = df_eq_criadas[df_eq_criadas.eq_ESF_criadas > 0]
-        # df_merge = df_eq.merge(df_eq_criadas, right_on = "Unidade_UBS", left_on = "Indice_UBS", how="outer")
-
-        # Das Equipes iniciais, quantas a unidade perdeu ?
-        # Fluxos: usar o dataframe geral filtrado, não apenas tipo_equipe==1
-        df_fluxo = df[df.Valor_Variavel > 0].reset_index(drop=True)
-        print(f"Linhas de fluxo a desenhar: {len(df_fluxo)}")
-
-        # Pane e camada para fluxos (acima de UBS e demais)
-        folium.map.CustomPane(name="flows_top", z_index=700).add_to(map)
-        camada_fluxos = folium.FeatureGroup(name="Fluxo de equipes")
-
-        for _, r in df_fluxo.iterrows():
-            lat_o = r.get("lat_origem")
-            lon_o = r.get("long_origem")
-            lat_d = r.get("lat_destino")
-            lon_d = r.get("long_destino")
-            if pd.isna(lat_o) or pd.isna(lon_o) or pd.isna(lat_d) or pd.isna(lon_d):
-                continue
-            try:
-                lat_o = float(lat_o)
-                lon_o = float(lon_o)
-                lat_d = float(lat_d)
-                lon_d = float(lon_d)
-            except Exception:
-                continue
-            if not (
-                np.isfinite(lat_o)
-                and np.isfinite(lon_o)
-                and np.isfinite(lat_d)
-                and np.isfinite(lon_d)
-            ):
-                continue
-            print(f"fluxo equipe {r.cnes_eq} plotado")
-            folium.PolyLine(
-                locations=[[lat_o, lon_o], [lat_d, lon_d]],
-                color="#ff5722",
-                weight=3.5,
-                opacity=1.0,
-                pane="flows_top",
-                tooltip=f"Fluxo equipe {r.get('Indice_equipe', '')}",
-            ).add_to(camada_fluxos)
-
-        camada_fluxos.add_to(map)
-        folium.LayerControl().add_to(map)
-        map.save("map_fluxo_eq_FINAL_6.html")
-        return map
-
-
 class AnaliseCenario:
     def __init__(self, path_cenario) -> None:
         self.read_data(path_cenario)
@@ -2397,954 +1723,940 @@ class ComparaResultadoBaseline:
         map.save("mapa_comparativo_emulti.html")
         print(f"Mapa salvo com sucesso!")
 
-        def analisa_emulti(self):
+    def analisa_emulti(self):
 
-            df_modelo = self.cenario.dados_fluxo_emulti.copy()
-            df_modelo = self.cenario.dados_fluxo_emulti.copy()
-            df_modelo_end = (
-                df_modelo.groupby(by="cnes_eq_emulti")
-                .agg(
-                    EQUIPES_VINCULADAS=("cnes_eq_esf", "count"),
-                    LATITUDE_FINAL=("lat_emulti", "first"),
-                    LONGITUDE_FINAL=("long_emulti", "first"),
+        df_modelo = self.cenario.dados_fluxo_emulti.copy()
+        df_modelo = self.cenario.dados_fluxo_emulti.copy()
+        df_modelo_end = (
+            df_modelo.groupby(by="cnes_eq_emulti")
+            .agg(
+                EQUIPES_VINCULADAS=("cnes_eq_esf", "count"),
+                LATITUDE_FINAL=("lat_emulti", "first"),
+                LONGITUDE_FINAL=("long_emulti", "first"),
+            )
+            .reset_index()
+        )
+
+        cols_real = [
+            "CO_EQUIPE",
+            "EQUIPES_VINCULADAS",
+            "NO_FANTASIA",
+            "CO_CNES",
+            "LATITUDE",
+            "LONGITUDE",
+            "geometry",
+        ]
+        df_real = self.baseline.df_emulti_reais[cols_real].copy()
+        df_merge = df_modelo_end.merge(
+            df_real,
+            left_on="cnes_eq_emulti",
+            right_on="CO_EQUIPE",
+            how="outer",
+            suffixes=("_modelo", "_baseline"),
+        )
+
+        # Preparar dados para o gráfico
+        # Usar cnes_eq_emulti ou CO_EQUIPE como identificador (qualquer um que tiver valor)
+        self.plota_mapa_comparativo_emulti(df_merge)
+        self.plota_comparacao_equipes_emulti(df_merge)
+
+    def analises(self, tamanho_faixa=50):
+        self.analisa_emulti()
+        self.analises_descritivas()
+        self.compara_quantidade_equipes()
+        self.plota_comparativo_acessibilidade()
+        self.analisa_cobertura_comparativa_por_ivs_2(tamanho_faixa=tamanho_faixa)
+
+        # Proximas analises = Dados de custo e quantitativo de equipes real x criadas!
+        # Diferenca de equipes !
+
+        # DF's com resultado: self.df_resultados_esb, self.df_resultados_esf, self.df_resumo_descritivo
+
+        # Comparacao Emulti!
+        # Quantidade de equipes ESF Cobertas
+        #
+        # Histograma da distancia da populacao para mostrar que ficamos mais proximos dos locais vulneraveis
+        # Mapa grafico com antes e depois da alocacao das eMulti!
+        map_emulti = self.cenario.plota_fluxo_Emulti()
+        map_emulti.save("map_fluxo_Emulti_2.html")
+
+    def analises_descritivas(self):
+        # populacao total atendida por Esf, EsB,
+        # Populacao_Atendida_ESF, Populacao_Atendida_ESB
+        # populacao_ajustada_eSF, populacao_ajustada_eSB,
+        populacao_total = self.df_merge.Populacao_Total.sum()
+        modelo_ESF = self.df_merge.Populacao_Atendida_ESF.sum()
+        modelo_ESB = self.df_merge.Populacao_Atendida_ESB.sum()
+        real_ESF = self.df_merge.pop_captada_eSF.sum()
+        real_ESB = self.df_merge.pop_captada_eSB.sum()
+
+        cobertura_ESF_modelo = round(modelo_ESF / populacao_total, 3)
+        cobertura_ESB_modelo = round(modelo_ESB / populacao_total, 3)
+
+        cobertura_ESF_real = round(real_ESF / populacao_total, 3)
+        cobertura_ESB_real = round(real_ESB / populacao_total, 3)
+
+        total_modelo = modelo_ESF + modelo_ESB
+        total_real = real_ESF + real_ESB
+        cobertura_total_modelo = round((total_modelo) / (populacao_total * 2), 3)
+        cobertura_total_real = round((total_real) / (populacao_total * 2), 3)
+
+        # Calcular a variação percentual entre total_modelo e total_real
+        if total_real != 0:
+            variacao_percentual = ((total_modelo - total_real) / total_real) * 100
+        else:
+            variacao_percentual = float("nan")
+
+        dados_descritivos = {
+            "População total": populacao_total,
+            "Modelo - População Atendida ESF": modelo_ESF,
+            "Modelo - População Atendida ESB": modelo_ESB,
+            "Real - População Captada ESF": real_ESF,
+            "Real - População Captada ESB": real_ESB,
+            "Total Modelo (ESF + ESB)": total_modelo,
+            "Total Real (ESF + ESB)": total_real,
+            "Cobertura ESF Modelo": cobertura_ESF_modelo,
+            "Cobertura ESF Real": cobertura_ESF_real,
+            "Cobertura ESB Modelo": cobertura_ESB_modelo,
+            "Cobertura ESB Real": cobertura_ESB_real,
+            "Cobertura (ESF+ESB) Juntos - Modelo": cobertura_total_modelo,
+            "Cobertura (ESF+ESB) Juntos - Real": cobertura_total_real,
+        }
+        self.df_resumo_descritivo = pd.DataFrame(
+            list(dados_descritivos.items()), columns=["Indicador", "Valor"]
+        )
+
+        print(f"População total: {populacao_total}")
+        print(f"Modelo - População Atendida ESF: {modelo_ESF}")
+        print(f"Modelo - População Atendida ESB: {modelo_ESB}")
+        print(f"Real - População Captada ESF: {real_ESF}")
+        print(f"Real - População Captada ESB: {real_ESB}")
+        print(f"Total Modelo (ESF + ESB): {total_modelo}")
+        print(f"Total Real (ESF + ESB): {total_real}")
+        print(f"Cobertura ESF Modelo: {cobertura_ESF_modelo}")
+        print(f"Cobertura ESF Real: {cobertura_ESF_real}")
+        print(f"Cobertura ESF Modelo: {cobertura_ESB_modelo}")
+        print(f"Cobertura ESF Real: {cobertura_ESB_real}")
+        print(
+            f"Cobertura ESF e ESB Juntos - Modelo = (Cobertura ESF + Cobertura ESB) / (Pop * 2) = {cobertura_total_modelo} "
+        )
+        print(
+            f"Cobertura ESF e ESB Juntos - Real = (Cobertura ESF + Cobertura ESB) / (Pop * 2) = {cobertura_total_real} "
+        )
+
+        # Analise de custos!
+        custos_equipe_real = self.baseline.custo_equipes_real.copy()
+        custos_equipe_modelo = self.cenario.df_custos.copy()
+        custos_fora_grafico = [
+            "Contratação ESF",
+            "Realocação ESF",
+            "Contratação ESB",
+            "Realocação ESB",
+            "Contratação ENASF",
+            "Realocação ENASF",
+        ]
+
+        custos_equipe_modelo = custos_equipe_modelo[
+            ~custos_equipe_modelo.Tipo_Custo.isin(custos_fora_grafico)
+        ]
+
+        # ============================================================================================================
+        # FORMATAÇÃO DO DATAFRAME DE CUSTOS DO MODELO
+        # ============================================================================================================
+
+        # Assumindo que seu dataframe se chama df_custos_modelo
+
+        # 1. Custos detalhados por tipo de equipe (para gráfico empilhado)
+        df_por_equipe = custos_equipe_modelo[
+            custos_equipe_modelo["Nivel"].isin(["ESF", "ESB", "ENASF"])
+        ].copy()
+        df_por_equipe = df_por_equipe[["Tipo_Custo", "Nivel", "Valor_R", "Percentual"]]
+        df_por_equipe["Valor_Milhoes"] = df_por_equipe["Valor_R"] / 1e6
+
+        # Transformar para formato wide (para gráfico empilhado)
+        df_equipe_pivot = df_por_equipe.pivot(
+            index="Tipo_Custo", columns="Nivel", values="Valor_Milhoes"
+        )
+
+        # 2. Totais por categoria (ESF, ESB, ENASF, Infraestrutura)
+        df_totais_categoria = custos_equipe_modelo[
+            custos_equipe_modelo["Nivel"] == "Total por Equipe"
+        ].copy()
+        df_infraestrutura = custos_equipe_modelo[
+            custos_equipe_modelo["Nivel"] == "Total por Categoria"
+        ].copy()
+        df_totais = pd.concat([df_totais_categoria, df_infraestrutura])
+        df_totais = df_totais[["Tipo_Custo", "Valor_R", "Percentual"]].reset_index(
+            drop=True
+        )
+        df_totais["Valor_Milhoes"] = df_totais["Valor_R"] / 1e6
+
+        # 3. Totais por tipo de custo (Contratação, Realocação, Operação)
+        df_por_tipo = custos_equipe_modelo[
+            custos_equipe_modelo["Nivel"] == "Total por Tipo"
+        ].copy()
+        df_por_tipo = df_por_tipo[["Tipo_Custo", "Valor_R", "Percentual"]].reset_index(
+            drop=True
+        )
+        df_por_tipo["Valor_Milhoes"] = df_por_tipo["Valor_R"] / 1e6
+
+        # ============================================================================================================
+        # FORMATAÇÃO DO DATAFRAME DE CUSTOS REAIS POR EQUIPE
+        # ============================================================================================================
+
+        # Assumindo que seu dataframe se chama df_custos_reais
+        df_custos_reais_formatado = self.baseline.custo_equipes_real.copy()
+
+        # Renomear colunas para padronização
+        df_custos_reais_formatado.columns = [
+            "DS_EQUIPE",
+            "Qntd_Equipes",
+            "Custo_Mensal",
+        ]
+        df_custos_reais_formatado["Custo_Anual"] = (
+            df_custos_reais_formatado["Custo_Mensal"] * 12
+        )
+        df_custos_reais_formatado["Custo_Anual_Milhoes"] = (
+            df_custos_reais_formatado["Custo_Anual"] / 1e6
+        )
+        df_custos_reais_formatado["Custo_Mensal_Milhoes"] = (
+            df_custos_reais_formatado["Custo_Mensal"] / 1e6
+        )
+
+        # Calcular percentuais
+        total_mensal = df_custos_reais_formatado["Custo_Mensal"].sum()
+        df_custos_reais_formatado["Percentual"] = (
+            df_custos_reais_formatado["Custo_Mensal"] / total_mensal * 100
+        ).round(2)
+
+        # ============================================================================================================
+        # GRÁFICOS Comparativos Real x Modelo por Equipes!
+        # ============================================================================================================
+        def refact__equipes_name_to_plot(eq):
+            if "EMULTI" in eq or "ENASF" in eq:
+                return "eMulti"
+            if "ESB" in eq:
+                return "eSB"
+            if "ESF" in eq:
+                return "eSF"
+
+        # total por equipe
+        agg_plot_modelo_total_equipe = (
+            df_por_equipe.groupby(by="Nivel")
+            .agg(total_por_equie=("Valor_Milhoes", "sum"))
+            .reset_index()
+        )
+        agg_plot_modelo_total_equipe["Tp_custo"] = "Modelo"
+        agg_plot_real_total_equipe = df_custos_reais_formatado[
+            ["DS_EQUIPE", "Custo_Mensal_Milhoes"]
+        ]
+        agg_plot_real_total_equipe["Tp_custo"] = "Real"
+        agg_plot_real_total_equipe = agg_plot_real_total_equipe.rename(
+            columns={"DS_EQUIPE": "Equipe", "Custo_Mensal_Milhoes": "Custo Total"}
+        )
+        agg_plot_modelo_total_equipe = agg_plot_modelo_total_equipe.rename(
+            columns={"Nivel": "Equipe", "total_por_equie": "Custo Total"}
+        )
+        df_plot_comp_custos_total = pd.concat(
+            [agg_plot_modelo_total_equipe, agg_plot_real_total_equipe]
+        )
+        df_plot_comp_custos_total["Equipe"] = df_plot_comp_custos_total["Equipe"].apply(
+            refact__equipes_name_to_plot
+        )
+
+        # custo total por equipe!
+        custo_total_equipes_modelo_dict = {
+            "Equipe": "Custo Total de Equipes",
+            "Custo Total": round(
+                df_plot_comp_custos_total[
+                    df_plot_comp_custos_total.Tp_custo == "Modelo"
+                ]["Custo Total"].sum(),
+                3,
+            ),
+            "Tp_custo": "Modelo",
+        }
+
+        custo_total_equipes_real_dict = {
+            "Equipe": "Custo Total de Equipes",
+            "Custo Total": round(
+                df_plot_comp_custos_total[df_plot_comp_custos_total.Tp_custo == "Real"][
+                    "Custo Total"
+                ].sum(),
+                3,
+            ),
+            "Tp_custo": "Real",
+        }
+
+        df_totais_custo = pd.DataFrame(
+            [custo_total_equipes_modelo_dict, custo_total_equipes_real_dict]
+        )
+
+        df_plot_comp_custos_total_equipes = pd.concat(
+            [df_plot_comp_custos_total, df_totais_custo], ignore_index=True
+        )
+
+        # ============================================================================================================
+        # GRÁFICOS Comparativos Real x Modelo geral: Custo de Equipes, Custo Fixo, Custo Variavel, Custo Realocacao,
+        # ============================================================================================================
+        # Calcular variáveis individuais
+        custo_fixo_real = round(self.baseline.custo_fixo_real / 1000000, 3)
+        custo_fixo_equipes_real = df_custos_reais_formatado.Custo_Mensal_Milhoes.sum()
+        # custo_realocacao_equipes_real = 0
+        # custo_contratacao_equipes_real = 0
+        custo_abertura_unidades_real = 0
+        custo_total_real = round(self.baseline.custo_total / 1000000, 3)
+
+        custo_fixo_modelo = round(
+            self.cenario.df_custos[
+                self.cenario.df_custos.Tipo_Custo == "Custo Fixo UBS"
+            ].Valor_R.iloc[0]
+            / 1000000,
+            3,
+        )
+        custo_fixo_equipes_modelo = round(
+            self.cenario.df_custos[
+                (
+                    (self.cenario.df_custos.Nivel == "Total por Tipo")
+                    & (self.cenario.df_custos.Tipo_Custo == "Total Operação")
                 )
-                .reset_index()
-            )
+            ].Valor_R.iloc[0]
+            / 1000000,
+            3,
+        )
+        """
+        custo_realocacao_equipes_modelo = round(
+            self.cenario.df_custos[
+                (
+                    (self.cenario.df_custos.Nivel == "Total por Tipo")
+                    & (self.cenario.df_custos.Tipo_Custo == "Total Realocação")
+                )
+            ].Valor_R.iloc[0]
+            / 1000000,
+            3,
+        )
+        custo_contratacao_equipes_modelo = round(
+            self.cenario.df_custos[
+                (
+                    (self.cenario.df_custos.Nivel == "Total por Tipo")
+                    & (self.cenario.df_custos.Tipo_Custo == "Total Contratação")
+                )
+            ].Valor_R.iloc[0]
+            / 1000000,
+            3,
+        )
+        
+        
+        """
 
-            cols_real = [
-                "CO_EQUIPE",
-                "EQUIPES_VINCULADAS",
-                "NO_FANTASIA",
-                "CO_CNES",
-                "LATITUDE",
-                "LONGITUDE",
-                "geometry",
-            ]
-            df_real = self.baseline.df_emulti_reais[cols_real].copy()
-            df_merge = df_modelo_end.merge(
-                df_real,
-                left_on="cnes_eq_emulti",
-                right_on="CO_EQUIPE",
-                how="outer",
-                suffixes=("_modelo", "_baseline"),
-            )
+        custo_abertura_unidades_modelo = round(
+            self.cenario.df_custos[
+                self.cenario.df_custos.Tipo_Custo == "Abertura UBS"
+            ].Valor_R.iloc[0]
+            / 1000000,
+            3,
+        )
+        custo_total_modelo = round(
+            self.cenario.df_custos[
+                self.cenario.df_custos.Tipo_Custo == "CUSTO TOTAL"
+            ].Valor_R.iloc[0]
+            / 1000000,
+            3,
+        )
 
-            # Preparar dados para o gráfico
-            # Usar cnes_eq_emulti ou CO_EQUIPE como identificador (qualquer um que tiver valor)
-            self.plota_mapa_comparativo_emulti(df_merge)
-            self.plota_comparacao_equipes_emulti(df_merge)
+        # Passar tudo para um dataframe "longo" conforme solicitado
+        # Tipo de custo será o nome base sem o sufixo _real/_modelo
+        # Tp_Custo será "real" ou "modelo"
 
-        def analises(self, tamanho_faixa=50):
-            self.analisa_emulti()
-            self.analises_descritivas()
-            self.compara_quantidade_equipes()
-            self.plota_comparativo_acessibilidade()
-            self.analisa_cobertura_comparativa_por_ivs_2(tamanho_faixa=tamanho_faixa)
+        dados_compilados = [
+            {
+                "tipo_custo": "custo_fixo",
+                "valor": custo_fixo_real,
+                "Tp_Custo": "real",
+            },
+            {
+                "tipo_custo": "custo_fixo_equipes",
+                "valor": custo_fixo_equipes_real,
+                "Tp_Custo": "real",
+            },
+            # {
+            # "tipo_custo": "custo_realocacao_equipes",
+            # "valor": custo_realocacao_equipes_real,
+            # "Tp_Custo": "real",
+            # },
+            # {
+            #  "tipo_custo": "custo_contratacao_equipes",
+            #  "valor": custo_contratacao_equipes_real,
+            # "Tp_Custo": "real",
+            # },
+            {
+                "tipo_custo": "custo_abertura_unidades",
+                "valor": custo_abertura_unidades_real,
+                "Tp_Custo": "real",
+            },
+            {
+                "tipo_custo": "custo_total",
+                "valor": custo_total_real,
+                "Tp_Custo": "real",
+            },
+            {
+                "tipo_custo": "custo_fixo",
+                "valor": custo_fixo_modelo,
+                "Tp_Custo": "modelo",
+            },
+            {
+                "tipo_custo": "custo_fixo_equipes",
+                "valor": custo_fixo_equipes_modelo,
+                "Tp_Custo": "modelo",
+            },
+            # {
+            #  "tipo_custo": "custo_realocacao_equipes",
+            # "valor": custo_realocacao_equipes_modelo,
+            # "Tp_Custo": "modelo",
+            # },
+            # {
+            # "tipo_custo": "custo_contratacao_equipes",
+            # "valor": custo_contratacao_equipes_modelo,
+            #  "Tp_Custo": "modelo",
+            # },
+            {
+                "tipo_custo": "custo_abertura_unidades",
+                "valor": custo_abertura_unidades_modelo,
+                "Tp_Custo": "modelo",
+            },
+            {
+                "tipo_custo": "custo_total",
+                "valor": custo_total_modelo,
+                "Tp_Custo": "modelo",
+            },
+        ]
 
-            # Proximas analises = Dados de custo e quantitativo de equipes real x criadas!
-            # Diferenca de equipes !
+        df_resumo_custos_compilado = pd.DataFrame(dados_compilados)
 
-            # DF's com resultado: self.df_resultados_esb, self.df_resultados_esf, self.df_resumo_descritivo
+        # ============================================================================================================
+        # Extratificacao custos Equipes - Só Modelo!
+        # ============================================================================================================
 
-            # Comparacao Emulti!
-            # Quantidade de equipes ESF Cobertas
-            #
-            # Histograma da distancia da populacao para mostrar que ficamos mais proximos dos locais vulneraveis
-            # Mapa grafico com antes e depois da alocacao das eMulti!
+        df_plot = self.cenario.df_custos[
+            self.cenario.df_custos.Nivel.isin(["ESF", "ESB", "ENASF"])
+        ].copy()
+        df_plot["Equipe"] = df_plot.Nivel.apply(refact__equipes_name_to_plot)
+        df_plot["custo_total"] = round(df_plot.Valor_R / 1000000, 3)
+        df_plot_end = df_plot[["Equipe", "custo_total", "Tipo_Custo"]]
 
-        def analises_descritivas(self):
-            # populacao total atendida por Esf, EsB,
-            # Populacao_Atendida_ESF, Populacao_Atendida_ESB
-            # populacao_ajustada_eSF, populacao_ajustada_eSB,
-            populacao_total = self.df_merge.Populacao_Total.sum()
-            modelo_ESF = self.df_merge.Populacao_Atendida_ESF.sum()
-            modelo_ESB = self.df_merge.Populacao_Atendida_ESB.sum()
-            real_ESF = self.df_merge.pop_captada_eSF.sum()
-            real_ESB = self.df_merge.pop_captada_eSB.sum()
-
-            cobertura_ESF_modelo = round(modelo_ESF / populacao_total, 3)
-            cobertura_ESB_modelo = round(modelo_ESB / populacao_total, 3)
-
-            cobertura_ESF_real = round(real_ESF / populacao_total, 3)
-            cobertura_ESB_real = round(real_ESB / populacao_total, 3)
-
-            total_modelo = modelo_ESF + modelo_ESB
-            total_real = real_ESF + real_ESB
-            cobertura_total_modelo = round((total_modelo) / (populacao_total * 2), 3)
-            cobertura_total_real = round((total_real) / (populacao_total * 2), 3)
-
-            # Calcular a variação percentual entre total_modelo e total_real
-            if total_real != 0:
-                variacao_percentual = ((total_modelo - total_real) / total_real) * 100
-            else:
-                variacao_percentual = float("nan")
-
-            dados_descritivos = {
-                "População total": populacao_total,
-                "Modelo - População Atendida ESF": modelo_ESF,
-                "Modelo - População Atendida ESB": modelo_ESB,
-                "Real - População Captada ESF": real_ESF,
-                "Real - População Captada ESB": real_ESB,
-                "Total Modelo (ESF + ESB)": total_modelo,
-                "Total Real (ESF + ESB)": total_real,
-                "Cobertura ESF Modelo": cobertura_ESF_modelo,
-                "Cobertura ESF Real": cobertura_ESF_real,
-                "Cobertura ESB Modelo": cobertura_ESB_modelo,
-                "Cobertura ESB Real": cobertura_ESB_real,
-                "Cobertura (ESF+ESB) Juntos - Modelo": cobertura_total_modelo,
-                "Cobertura (ESF+ESB) Juntos - Real": cobertura_total_real,
-            }
-            self.df_resumo_descritivo = pd.DataFrame(
-                list(dados_descritivos.items()), columns=["Indicador", "Valor"]
-            )
-
-            print(f"População total: {populacao_total}")
-            print(f"Modelo - População Atendida ESF: {modelo_ESF}")
-            print(f"Modelo - População Atendida ESB: {modelo_ESB}")
-            print(f"Real - População Captada ESF: {real_ESF}")
-            print(f"Real - População Captada ESB: {real_ESB}")
-            print(f"Total Modelo (ESF + ESB): {total_modelo}")
-            print(f"Total Real (ESF + ESB): {total_real}")
-            print(f"Cobertura ESF Modelo: {cobertura_ESF_modelo}")
-            print(f"Cobertura ESF Real: {cobertura_ESF_real}")
-            print(f"Cobertura ESF Modelo: {cobertura_ESB_modelo}")
-            print(f"Cobertura ESF Real: {cobertura_ESB_real}")
-            print(
-                f"Cobertura ESF e ESB Juntos - Modelo = (Cobertura ESF + Cobertura ESB) / (Pop * 2) = {cobertura_total_modelo} "
-            )
-            print(
-                f"Cobertura ESF e ESB Juntos - Real = (Cobertura ESF + Cobertura ESB) / (Pop * 2) = {cobertura_total_real} "
-            )
-
-            # Analise de custos!
-            custos_equipe_real = self.baseline.custo_equipes_real.copy()
-            custos_equipe_modelo = self.cenario.df_custos.copy()
-            custos_fora_grafico = [
-                "Contratação ESF",
-                "Realocação ESF",
-                "Contratação ESB",
-                "Realocação ESB",
-                "Contratação ENASF",
-                "Realocação ENASF",
-            ]
-
-            custos_equipe_modelo = custos_equipe_modelo[
-                ~custos_equipe_modelo.Tipo_Custo.isin(custos_fora_grafico)
-            ]
-
-            # ============================================================================================================
-            # FORMATAÇÃO DO DATAFRAME DE CUSTOS DO MODELO
-            # ============================================================================================================
-
-            # Assumindo que seu dataframe se chama df_custos_modelo
-
-            # 1. Custos detalhados por tipo de equipe (para gráfico empilhado)
-            df_por_equipe = custos_equipe_modelo[
-                custos_equipe_modelo["Nivel"].isin(["ESF", "ESB", "ENASF"])
-            ].copy()
-            df_por_equipe = df_por_equipe[
-                ["Tipo_Custo", "Nivel", "Valor_R", "Percentual"]
-            ]
-            df_por_equipe["Valor_Milhoes"] = df_por_equipe["Valor_R"] / 1e6
-
-            # Transformar para formato wide (para gráfico empilhado)
-            df_equipe_pivot = df_por_equipe.pivot(
-                index="Tipo_Custo", columns="Nivel", values="Valor_Milhoes"
-            )
-
-            # 2. Totais por categoria (ESF, ESB, ENASF, Infraestrutura)
-            df_totais_categoria = custos_equipe_modelo[
-                custos_equipe_modelo["Nivel"] == "Total por Equipe"
-            ].copy()
-            df_infraestrutura = custos_equipe_modelo[
-                custos_equipe_modelo["Nivel"] == "Total por Categoria"
-            ].copy()
-            df_totais = pd.concat([df_totais_categoria, df_infraestrutura])
-            df_totais = df_totais[["Tipo_Custo", "Valor_R", "Percentual"]].reset_index(
-                drop=True
-            )
-            df_totais["Valor_Milhoes"] = df_totais["Valor_R"] / 1e6
-
-            # 3. Totais por tipo de custo (Contratação, Realocação, Operação)
-            df_por_tipo = custos_equipe_modelo[
-                custos_equipe_modelo["Nivel"] == "Total por Tipo"
-            ].copy()
-            df_por_tipo = df_por_tipo[
-                ["Tipo_Custo", "Valor_R", "Percentual"]
-            ].reset_index(drop=True)
-            df_por_tipo["Valor_Milhoes"] = df_por_tipo["Valor_R"] / 1e6
-
-            # ============================================================================================================
-            # FORMATAÇÃO DO DATAFRAME DE CUSTOS REAIS POR EQUIPE
-            # ============================================================================================================
-
-            # Assumindo que seu dataframe se chama df_custos_reais
-            df_custos_reais_formatado = self.baseline.custo_equipes_real.copy()
-
-            # Renomear colunas para padronização
-            df_custos_reais_formatado.columns = [
-                "DS_EQUIPE",
-                "Qntd_Equipes",
-                "Custo_Mensal",
-            ]
-            df_custos_reais_formatado["Custo_Anual"] = (
-                df_custos_reais_formatado["Custo_Mensal"] * 12
-            )
-            df_custos_reais_formatado["Custo_Anual_Milhoes"] = (
-                df_custos_reais_formatado["Custo_Anual"] / 1e6
-            )
-            df_custos_reais_formatado["Custo_Mensal_Milhoes"] = (
-                df_custos_reais_formatado["Custo_Mensal"] / 1e6
-            )
-
-            # Calcular percentuais
-            total_mensal = df_custos_reais_formatado["Custo_Mensal"].sum()
-            df_custos_reais_formatado["Percentual"] = (
-                df_custos_reais_formatado["Custo_Mensal"] / total_mensal * 100
-            ).round(2)
-
-            # ============================================================================================================
-            # GRÁFICOS Comparativos Real x Modelo por Equipes!
-            # ============================================================================================================
-            def refact__equipes_name_to_plot(eq):
-                if "EMULTI" in eq or "ENASF" in eq:
-                    return "eMulti"
-                if "ESB" in eq:
-                    return "eSB"
-                if "ESF" in eq:
-                    return "eSF"
-
-            # total por equipe
-            agg_plot_modelo_total_equipe = (
-                df_por_equipe.groupby(by="Nivel")
-                .agg(total_por_equie=("Valor_Milhoes", "sum"))
-                .reset_index()
-            )
-            agg_plot_modelo_total_equipe["Tp_custo"] = "Modelo"
-            agg_plot_real_total_equipe = df_custos_reais_formatado[
-                ["DS_EQUIPE", "Custo_Mensal_Milhoes"]
-            ]
-            agg_plot_real_total_equipe["Tp_custo"] = "Real"
-            agg_plot_real_total_equipe = agg_plot_real_total_equipe.rename(
-                columns={"DS_EQUIPE": "Equipe", "Custo_Mensal_Milhoes": "Custo Total"}
-            )
-            agg_plot_modelo_total_equipe = agg_plot_modelo_total_equipe.rename(
-                columns={"Nivel": "Equipe", "total_por_equie": "Custo Total"}
-            )
-            df_plot_comp_custos_total = pd.concat(
-                [agg_plot_modelo_total_equipe, agg_plot_real_total_equipe]
-            )
-            df_plot_comp_custos_total["Equipe"] = df_plot_comp_custos_total[
-                "Equipe"
-            ].apply(refact__equipes_name_to_plot)
-
-            # custo total por equipe!
-            custo_total_equipes_modelo_dict = {
-                "Equipe": "Custo Total de Equipes",
-                "Custo Total": round(
-                    df_plot_comp_custos_total[
-                        df_plot_comp_custos_total.Tp_custo == "Modelo"
-                    ]["Custo Total"].sum(),
-                    3,
-                ),
-                "Tp_custo": "Modelo",
-            }
-
-            custo_total_equipes_real_dict = {
-                "Equipe": "Custo Total de Equipes",
-                "Custo Total": round(
-                    df_plot_comp_custos_total[
-                        df_plot_comp_custos_total.Tp_custo == "Real"
-                    ]["Custo Total"].sum(),
-                    3,
-                ),
-                "Tp_custo": "Real",
-            }
-
-            df_totais_custo = pd.DataFrame(
-                [custo_total_equipes_modelo_dict, custo_total_equipes_real_dict]
-            )
-
-            df_plot_comp_custos_total_equipes = pd.concat(
-                [df_plot_comp_custos_total, df_totais_custo], ignore_index=True
-            )
-
-            # ============================================================================================================
-            # GRÁFICOS Comparativos Real x Modelo geral: Custo de Equipes, Custo Fixo, Custo Variavel, Custo Realocacao,
-            # ============================================================================================================
-            # Calcular variáveis individuais
-            custo_fixo_real = round(self.baseline.custo_fixo_real / 1000000, 3)
-            custo_fixo_equipes_real = (
-                df_custos_reais_formatado.Custo_Mensal_Milhoes.sum()
-            )
-            # custo_realocacao_equipes_real = 0
-            # custo_contratacao_equipes_real = 0
-            custo_abertura_unidades_real = 0
-            custo_total_real = round(self.baseline.custo_total / 1000000, 3)
-
-            custo_fixo_modelo = round(
-                self.cenario.df_custos[
-                    self.cenario.df_custos.Tipo_Custo == "Custo Fixo UBS"
-                ].Valor_R.iloc[0]
-                / 1000000,
-                3,
-            )
-            custo_fixo_equipes_modelo = round(
-                self.cenario.df_custos[
-                    (
-                        (self.cenario.df_custos.Nivel == "Total por Tipo")
-                        & (self.cenario.df_custos.Tipo_Custo == "Total Operação")
-                    )
-                ].Valor_R.iloc[0]
-                / 1000000,
-                3,
-            )
-            """
-            custo_realocacao_equipes_modelo = round(
-                self.cenario.df_custos[
-                    (
-                        (self.cenario.df_custos.Nivel == "Total por Tipo")
-                        & (self.cenario.df_custos.Tipo_Custo == "Total Realocação")
-                    )
-                ].Valor_R.iloc[0]
-                / 1000000,
-                3,
-            )
-            custo_contratacao_equipes_modelo = round(
-                self.cenario.df_custos[
-                    (
-                        (self.cenario.df_custos.Nivel == "Total por Tipo")
-                        & (self.cenario.df_custos.Tipo_Custo == "Total Contratação")
-                    )
-                ].Valor_R.iloc[0]
-                / 1000000,
-                3,
-            )
-            
-            
-            """
-
-            custo_abertura_unidades_modelo = round(
-                self.cenario.df_custos[
-                    self.cenario.df_custos.Tipo_Custo == "Abertura UBS"
-                ].Valor_R.iloc[0]
-                / 1000000,
-                3,
-            )
-            custo_total_modelo = round(
-                self.cenario.df_custos[
-                    self.cenario.df_custos.Tipo_Custo == "CUSTO TOTAL"
-                ].Valor_R.iloc[0]
-                / 1000000,
-                3,
-            )
-
-            # Passar tudo para um dataframe "longo" conforme solicitado
-            # Tipo de custo será o nome base sem o sufixo _real/_modelo
-            # Tp_Custo será "real" ou "modelo"
-
-            dados_compilados = [
-                {
-                    "tipo_custo": "custo_fixo",
-                    "valor": custo_fixo_real,
-                    "Tp_Custo": "real",
-                },
-                {
-                    "tipo_custo": "custo_fixo_equipes",
-                    "valor": custo_fixo_equipes_real,
-                    "Tp_Custo": "real",
-                },
-                # {
-                # "tipo_custo": "custo_realocacao_equipes",
-                # "valor": custo_realocacao_equipes_real,
-                # "Tp_Custo": "real",
-                # },
-                # {
-                #  "tipo_custo": "custo_contratacao_equipes",
-                #  "valor": custo_contratacao_equipes_real,
-                # "Tp_Custo": "real",
-                # },
-                {
-                    "tipo_custo": "custo_abertura_unidades",
-                    "valor": custo_abertura_unidades_real,
-                    "Tp_Custo": "real",
-                },
-                {
-                    "tipo_custo": "custo_total",
-                    "valor": custo_total_real,
-                    "Tp_Custo": "real",
-                },
-                {
-                    "tipo_custo": "custo_fixo",
-                    "valor": custo_fixo_modelo,
-                    "Tp_Custo": "modelo",
-                },
-                {
-                    "tipo_custo": "custo_fixo_equipes",
-                    "valor": custo_fixo_equipes_modelo,
-                    "Tp_Custo": "modelo",
-                },
-                # {
-                #  "tipo_custo": "custo_realocacao_equipes",
-                # "valor": custo_realocacao_equipes_modelo,
-                # "Tp_Custo": "modelo",
-                # },
-                # {
-                # "tipo_custo": "custo_contratacao_equipes",
-                # "valor": custo_contratacao_equipes_modelo,
-                #  "Tp_Custo": "modelo",
-                # },
-                {
-                    "tipo_custo": "custo_abertura_unidades",
-                    "valor": custo_abertura_unidades_modelo,
-                    "Tp_Custo": "modelo",
-                },
-                {
-                    "tipo_custo": "custo_total",
-                    "valor": custo_total_modelo,
-                    "Tp_Custo": "modelo",
-                },
-            ]
-
-            df_resumo_custos_compilado = pd.DataFrame(dados_compilados)
-
-            # ============================================================================================================
-            # Extratificacao custos Equipes - Só Modelo!
-            # ============================================================================================================
-
-            df_plot = self.cenario.df_custos[
-                self.cenario.df_custos.Nivel.isin(["ESF", "ESB", "ENASF"])
-            ].copy()
-            df_plot["Equipe"] = df_plot.Nivel.apply(refact__equipes_name_to_plot)
-            df_plot["custo_total"] = round(df_plot.Valor_R / 1000000, 3)
-            df_plot_end = df_plot[["Equipe", "custo_total", "Tipo_Custo"]]
-
-            # Criar gráfico com 3 subplots
-            self.cria_grafico_custos_comparativo(
-                df_plot_comp_custos_total_equipes,
-                df_resumo_custos_compilado,
-                df_plot_end,
-            )
-
-        def cria_grafico_custos_comparativo(
-            self,
+        # Criar gráfico com 3 subplots
+        self.cria_grafico_custos_comparativo(
             df_plot_comp_custos_total_equipes,
             df_resumo_custos_compilado,
             df_plot_end,
-        ):
-            """
-            Cria gráfico com 3 subplots comparando custos entre modelo e real
-            """
-            import plotly.graph_objects as go
-            from plotly.subplots import make_subplots
+        )
 
-            # Definir cores consistentes
-            cores = {
-                "real": "#1f77b4",  # Azul
-                "modelo": "#7f7f7f",  # Cinza
-                "Real": "#1f77b4",  # Azul (com R maiúsculo)
-                "Modelo": "#7f7f7f",  # Cinza (com M maiúsculo)
-            }
+    def cria_grafico_custos_comparativo(
+        self,
+        df_plot_comp_custos_total_equipes,
+        df_resumo_custos_compilado,
+        df_plot_end,
+    ):
+        """
+        Cria gráfico com 3 subplots comparando custos entre modelo e real
+        """
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
 
-            # Criar subplots: 1 grande em cima, 2 menores embaixo
-            fig = make_subplots(
-                rows=2,
-                cols=1,
-                subplot_titles=(
-                    "Comparação de Custos por Categoria (Real vs Modelo)",
-                    "Comparação de Custos por Equipe (Real vs Modelo)",
+        # Definir cores consistentes
+        cores = {
+            "real": "#1f77b4",  # Azul
+            "modelo": "#7f7f7f",  # Cinza
+            "Real": "#1f77b4",  # Azul (com R maiúsculo)
+            "Modelo": "#7f7f7f",  # Cinza (com M maiúsculo)
+        }
+
+        # Criar subplots: 1 grande em cima, 2 menores embaixo
+        fig = make_subplots(
+            rows=2,
+            cols=1,
+            subplot_titles=(
+                "Comparação de Custos por Categoria (Real vs Modelo)",
+                "Comparação de Custos por Equipe (Real vs Modelo)",
+            ),
+            specs=[
+                [{"type": "bar"}],
+                [{"type": "bar"}],
+            ],
+            vertical_spacing=0.25,
+            horizontal_spacing=0.12,
+        )
+
+        # ============================================================================================================
+        # GRÁFICO 1: df_resumo_custos_compilado (maior, em cima)
+        # ============================================================================================================
+
+        # Filtrar dados por tipo de custo
+        for tp_custo in df_resumo_custos_compilado["Tp_Custo"].unique():
+            df_filtrado = df_resumo_custos_compilado[
+                df_resumo_custos_compilado["Tp_Custo"] == tp_custo
+            ]
+
+            fig.add_trace(
+                go.Bar(
+                    x=df_filtrado["tipo_custo"],
+                    y=df_filtrado["valor"],
+                    name=f"Custos {tp_custo.title()}",
+                    marker_color=cores[tp_custo],
+                    text=df_filtrado["valor"].apply(lambda x: f"{x:.3f}"),
+                    textposition="outside",
+                    showlegend=True,
                 ),
-                specs=[
-                    [{"type": "bar"}],
-                    [{"type": "bar"}],
-                ],
-                vertical_spacing=0.25,
-                horizontal_spacing=0.12,
+                row=1,
+                col=1,
             )
 
-            # ============================================================================================================
-            # GRÁFICO 1: df_resumo_custos_compilado (maior, em cima)
-            # ============================================================================================================
+        # ============================================================================================================
+        # GRÁFICO 2: df_plot_comp_custos_total_equipes (esquerda embaixo)
+        # ============================================================================================================
 
-            # Filtrar dados por tipo de custo
-            for tp_custo in df_resumo_custos_compilado["Tp_Custo"].unique():
-                df_filtrado = df_resumo_custos_compilado[
-                    df_resumo_custos_compilado["Tp_Custo"] == tp_custo
+        for tp_custo in df_plot_comp_custos_total_equipes["Tp_custo"].unique():
+            df_filtrado = df_plot_comp_custos_total_equipes[
+                df_plot_comp_custos_total_equipes["Tp_custo"] == tp_custo
+            ]
+
+            fig.add_trace(
+                go.Bar(
+                    x=df_filtrado["Equipe"],
+                    y=df_filtrado["Custo Total"],
+                    name=f"Equipes {tp_custo}",
+                    marker_color=cores[tp_custo],
+                    text=df_filtrado["Custo Total"].apply(lambda x: f"{x:.3f}"),
+                    textposition="outside",
+                    showlegend=False,
+                ),
+                row=2,
+                col=1,
+            )
+
+        # ============================================================================================================
+        # GRÁFICO 3: df_plot_end (direita embaixo)
+        # ============================================================================================================
+
+        # Para este gráfico, vamos usar cores diferentes para cada tipo de custo
+        # cores_tipo_custo = {
+        #     "Contratação ESF": "#ff7f0e",  # Laranja
+        #     "Realocação ESF": "#2ca02c",  # Verde
+        #     "Operação ESF": "#d62728",  # Vermelho
+        #     "Contratação ESB": "#9467bd",  # Roxo
+        #     "Realocação ESB": "#8c564b",  # Marrom
+        #     "Operação ESB": "#e377c2",  # Rosa
+        #     "Contratação ENASF": "#7f7f7f",  # Cinza
+        #     "Realocação ENASF": "#bcbd22",  # Verde amarelado
+        #     "Operação ENASF": "#17becf",  # Ciano
+        # }
+
+        # for equipe in df_plot_end["Equipe"].unique():
+        #     df_equipe = df_plot_end[df_plot_end["Equipe"] == equipe]
+
+        #     for _, row in df_equipe.iterrows():
+        #         tipo_custo = row["Tipo_Custo"]
+        #         cor = cores_tipo_custo.get(tipo_custo, "#7f7f7f")
+
+        #         fig.add_trace(
+        #             go.Bar(
+        #                 x=[equipe],
+        #                 y=[row["custo_total"]],
+        #                 name=tipo_custo,
+        #                 marker_color=cor,
+        #                 text=f"{row['custo_total']:.3f}",
+        #                 textposition="outside",
+        #                 showlegend=False,
+        #                 legendgroup=equipe,
+        #             ),
+        #             row=2,
+        #             col=2,
+        #         )
+
+        # ============================================================================================================
+        # CONFIGURAÇÃO DO LAYOUT
+        # ============================================================================================================
+
+        fig.update_layout(
+            height=1000,
+            width=1200,
+            title_text="Análise Comparativa de Custos: Real vs Modelo",
+            title_x=0.5,
+            title_font_size=16,
+            showlegend=True,
+            paper_bgcolor="#ffffff",
+            plot_bgcolor="#ffffff",
+            margin=dict(t=90, b=90, l=80, r=40),
+            legend=dict(
+                orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5
+            ),
+            barmode="group",
+            bargap=0.2,
+        )
+
+        # Configurar eixos
+        fig.update_xaxes(title_text="Tipo de Custo", row=1, col=1)
+        fig.update_xaxes(title_text="Equipe", row=2, col=1)
+        # fig.update_xaxes(title_text="Equipe", row=2, col=2)
+
+        fig.update_yaxes(title_text="Custo (Milhões R$)", row=1, col=1)
+        fig.update_yaxes(title_text="Custo (Milhões R$)", row=2, col=1)
+        # fig.update_yaxes(title_text="Custo (Milhões R$)", row=2, col=2)
+
+        # Rotacionar labels do eixo x para melhor legibilidade
+        fig.update_xaxes(tickangle=45, row=1, col=1)
+        fig.update_xaxes(tickangle=45, row=2, col=1)
+        # fig.update_xaxes(tickangle=45, srow=2, col=2)
+
+        # Ajustes globais de traços
+        fig.update_traces(cliponaxis=False)
+
+        # Salvar o gráfico
+        fig.write_html("analise_custos_completa.html")
+        fig.write_image("analise_custos_completa.png", width=1200, height=1000)
+
+        print("Gráfico de análise de custos criado e salvo!")
+        # return fig
+
+    def analisa_cobertura_comparativa_por_ivs_2(self, tamanho_faixa=20):
+
+        print("LOGGING: INICIANDO ANÁLISE COMPARATIVA DE COBERTURA POR FAIXAS DE IVS")
+
+        # Trabalhar com cópia do dataframe
+        df = self.df_merge.copy()
+
+        # Verificar colunas necessárias
+        colunas_necessarias = {
+            "ESF": ["pop_captada_eSF", "Populacao_Atendida_ESF"],
+            "ESB": ["pop_captada_eSB", "Populacao_Atendida_ESB"],
+        }
+
+        for tipo, cols in colunas_necessarias.items():
+            for col in cols:
+                if col not in df.columns:
+                    print(f"ERRO: Coluna '{col}' não encontrada para {tipo}!")
+                    return None, None
+
+        total_setores = len(df)
+        num_faixas = int(np.ceil(total_setores / tamanho_faixa))
+
+        # Dicionário para armazenar resultados
+        resultados_dict = {"ESF": [], "ESB": []}
+
+        # Processar cada tipo de equipe
+        for tipo_equipe in ["ESF", "ESB"]:
+            col_captada = colunas_necessarias[tipo_equipe][0]
+            col_atendida = colunas_necessarias[tipo_equipe][1]
+
+            print(f"\n{'='*60}")
+            print(f"ANÁLISE {tipo_equipe}")
+            print(f"{'='*60}")
+
+            for i in range(num_faixas):
+                inicio_faixa = i * tamanho_faixa + 1
+                fim_faixa = min((i + 1) * tamanho_faixa, total_setores)
+
+                # Filtrar setores nesta faixa
+                setores_faixa = df[
+                    (df["Posicao_Ranking_IVS"] >= inicio_faixa)
+                    & (df["Posicao_Ranking_IVS"] <= fim_faixa)
                 ]
 
-                fig.add_trace(
-                    go.Bar(
-                        x=df_filtrado["tipo_custo"],
-                        y=df_filtrado["valor"],
-                        name=f"Custos {tp_custo.title()}",
-                        marker_color=cores[tp_custo],
-                        text=df_filtrado["valor"].apply(lambda x: f"{x:.3f}"),
-                        textposition="outside",
-                        showlegend=True,
-                    ),
-                    row=1,
-                    col=1,
+                # Calcular métricas
+                total_na_faixa = len(setores_faixa)
+                pop_captada_total = setores_faixa[col_captada].sum()
+                pop_atendida_total = setores_faixa[col_atendida].sum()
+                diferenca = pop_atendida_total - pop_captada_total
+                percentual_atendimento = (
+                    (pop_atendida_total / pop_captada_total * 100)
+                    if pop_captada_total > 0
+                    else 0
                 )
 
-            # ============================================================================================================
-            # GRÁFICO 2: df_plot_comp_custos_total_equipes (esquerda embaixo)
-            # ============================================================================================================
+                # Setores com cobertura
+                setores_com_captacao = (setores_faixa[col_captada] > 0).sum()
+                setores_com_atendimento = (setores_faixa[col_atendida] > 0).sum()
 
-            for tp_custo in df_plot_comp_custos_total_equipes["Tp_custo"].unique():
-                df_filtrado = df_plot_comp_custos_total_equipes[
-                    df_plot_comp_custos_total_equipes["Tp_custo"] == tp_custo
-                ]
+                # IVS médio
+                ivs_medio = setores_faixa["IVS"].mean()
 
-                fig.add_trace(
-                    go.Bar(
-                        x=df_filtrado["Equipe"],
-                        y=df_filtrado["Custo Total"],
-                        name=f"Equipes {tp_custo}",
-                        marker_color=cores[tp_custo],
-                        text=df_filtrado["Custo Total"].apply(lambda x: f"{x:.3f}"),
-                        textposition="outside",
-                        showlegend=False,
-                    ),
-                    row=2,
-                    col=1,
-                )
-
-            # ============================================================================================================
-            # GRÁFICO 3: df_plot_end (direita embaixo)
-            # ============================================================================================================
-
-            # Para este gráfico, vamos usar cores diferentes para cada tipo de custo
-            # cores_tipo_custo = {
-            #     "Contratação ESF": "#ff7f0e",  # Laranja
-            #     "Realocação ESF": "#2ca02c",  # Verde
-            #     "Operação ESF": "#d62728",  # Vermelho
-            #     "Contratação ESB": "#9467bd",  # Roxo
-            #     "Realocação ESB": "#8c564b",  # Marrom
-            #     "Operação ESB": "#e377c2",  # Rosa
-            #     "Contratação ENASF": "#7f7f7f",  # Cinza
-            #     "Realocação ENASF": "#bcbd22",  # Verde amarelado
-            #     "Operação ENASF": "#17becf",  # Ciano
-            # }
-
-            # for equipe in df_plot_end["Equipe"].unique():
-            #     df_equipe = df_plot_end[df_plot_end["Equipe"] == equipe]
-
-            #     for _, row in df_equipe.iterrows():
-            #         tipo_custo = row["Tipo_Custo"]
-            #         cor = cores_tipo_custo.get(tipo_custo, "#7f7f7f")
-
-            #         fig.add_trace(
-            #             go.Bar(
-            #                 x=[equipe],
-            #                 y=[row["custo_total"]],
-            #                 name=tipo_custo,
-            #                 marker_color=cor,
-            #                 text=f"{row['custo_total']:.3f}",
-            #                 textposition="outside",
-            #                 showlegend=False,
-            #                 legendgroup=equipe,
-            #             ),
-            #             row=2,
-            #             col=2,
-            #         )
-
-            # ============================================================================================================
-            # CONFIGURAÇÃO DO LAYOUT
-            # ============================================================================================================
-
-            fig.update_layout(
-                height=1000,
-                width=1200,
-                title_text="Análise Comparativa de Custos: Real vs Modelo",
-                title_x=0.5,
-                title_font_size=16,
-                showlegend=True,
-                paper_bgcolor="#ffffff",
-                plot_bgcolor="#ffffff",
-                margin=dict(t=90, b=90, l=80, r=40),
-                legend=dict(
-                    orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5
-                ),
-                barmode="group",
-                bargap=0.2,
-            )
-
-            # Configurar eixos
-            fig.update_xaxes(title_text="Tipo de Custo", row=1, col=1)
-            fig.update_xaxes(title_text="Equipe", row=2, col=1)
-            # fig.update_xaxes(title_text="Equipe", row=2, col=2)
-
-            fig.update_yaxes(title_text="Custo (Milhões R$)", row=1, col=1)
-            fig.update_yaxes(title_text="Custo (Milhões R$)", row=2, col=1)
-            # fig.update_yaxes(title_text="Custo (Milhões R$)", row=2, col=2)
-
-            # Rotacionar labels do eixo x para melhor legibilidade
-            fig.update_xaxes(tickangle=45, row=1, col=1)
-            fig.update_xaxes(tickangle=45, row=2, col=1)
-            # fig.update_xaxes(tickangle=45, srow=2, col=2)
-
-            # Ajustes globais de traços
-            fig.update_traces(cliponaxis=False)
-
-            # Salvar o gráfico
-            fig.write_html("analise_custos_completa.html")
-            fig.write_image("analise_custos_completa.png", width=1200, height=1000)
-
-            print("Gráfico de análise de custos criado e salvo!")
-            # return fig
-
-        def analisa_cobertura_comparativa_por_ivs_2(self, tamanho_faixa=20):
-
-            print(
-                "LOGGING: INICIANDO ANÁLISE COMPARATIVA DE COBERTURA POR FAIXAS DE IVS"
-            )
-
-            # Trabalhar com cópia do dataframe
-            df = self.df_merge.copy()
-
-            # Verificar colunas necessárias
-            colunas_necessarias = {
-                "ESF": ["pop_captada_eSF", "Populacao_Atendida_ESF"],
-                "ESB": ["pop_captada_eSB", "Populacao_Atendida_ESB"],
-            }
-
-            for tipo, cols in colunas_necessarias.items():
-                for col in cols:
-                    if col not in df.columns:
-                        print(f"ERRO: Coluna '{col}' não encontrada para {tipo}!")
-                        return None, None
-
-            total_setores = len(df)
-            num_faixas = int(np.ceil(total_setores / tamanho_faixa))
-
-            # Dicionário para armazenar resultados
-            resultados_dict = {"ESF": [], "ESB": []}
-
-            # Processar cada tipo de equipe
-            for tipo_equipe in ["ESF", "ESB"]:
-                col_captada = colunas_necessarias[tipo_equipe][0]
-                col_atendida = colunas_necessarias[tipo_equipe][1]
-
-                print(f"\n{'='*60}")
-                print(f"ANÁLISE {tipo_equipe}")
-                print(f"{'='*60}")
-
-                for i in range(num_faixas):
-                    inicio_faixa = i * tamanho_faixa + 1
-                    fim_faixa = min((i + 1) * tamanho_faixa, total_setores)
-
-                    # Filtrar setores nesta faixa
-                    setores_faixa = df[
-                        (df["Posicao_Ranking_IVS"] >= inicio_faixa)
-                        & (df["Posicao_Ranking_IVS"] <= fim_faixa)
-                    ]
-
-                    # Calcular métricas
-                    total_na_faixa = len(setores_faixa)
-                    pop_captada_total = setores_faixa[col_captada].sum()
-                    pop_atendida_total = setores_faixa[col_atendida].sum()
-                    diferenca = pop_atendida_total - pop_captada_total
-                    percentual_atendimento = (
-                        (pop_atendida_total / pop_captada_total * 100)
-                        if pop_captada_total > 0
-                        else 0
-                    )
-
-                    # Setores com cobertura
-                    setores_com_captacao = (setores_faixa[col_captada] > 0).sum()
-                    setores_com_atendimento = (setores_faixa[col_atendida] > 0).sum()
-
-                    # IVS médio
-                    ivs_medio = setores_faixa["IVS"].mean()
-
-                    nivel_criticidade = (
-                        "Muito Alto"
-                        if inicio_faixa <= 20
+                nivel_criticidade = (
+                    "Muito Alto"
+                    if inicio_faixa <= 20
+                    else (
+                        "Alto"
+                        if inicio_faixa <= 40
                         else (
-                            "Alto"
-                            if inicio_faixa <= 40
-                            else (
-                                "Médio"
-                                if inicio_faixa <= 60
-                                else "Baixo" if inicio_faixa <= 80 else "Muito Baixo"
-                            )
+                            "Médio"
+                            if inicio_faixa <= 60
+                            else "Baixo" if inicio_faixa <= 80 else "Muito Baixo"
                         )
                     )
-
-                    resultados_dict[tipo_equipe].append(
-                        {
-                            "Faixa": f"{inicio_faixa}-{fim_faixa}",
-                            "Inicio_Faixa": inicio_faixa,
-                            "Fim_Faixa": fim_faixa,
-                            "Total_Setores": total_na_faixa,
-                            "Pop_Captada": pop_captada_total,
-                            "Pop_Atendida": pop_atendida_total,
-                            "Diferenca": diferenca,
-                            "Percentual_Atendimento": percentual_atendimento,
-                            "Setores_Com_Captacao": setores_com_captacao,
-                            "Setores_Com_Atendimento": setores_com_atendimento,
-                            "IVS_Medio": ivs_medio,
-                            "Nivel_Criticidade": nivel_criticidade,
-                        }
-                    )
-
-                    print(f"Faixa {inicio_faixa}-{fim_faixa} ({nivel_criticidade}):")
-                    print(
-                        f"  Pop Captada: {pop_captada_total:,.0f} | Pop Atendida: {pop_atendida_total:,.0f}"
-                    )
-                    print(
-                        f"  Diferença: {diferenca:+,.0f} ({percentual_atendimento:.1f}%)"
-                    )
-                    print(
-                        f"  Setores: {setores_com_atendimento}/{setores_com_captacao} com atendimento"
-                    )
-
-            # Converter para DataFrames
-            self.df_resultados_esf = pd.DataFrame(resultados_dict["ESF"])
-            self.df_resultados_esb = pd.DataFrame(resultados_dict["ESB"])
-
-            # Criar subplots com Plotly
-            fig = make_subplots(
-                rows=3,
-                cols=2,
-                subplot_titles=(
-                    "ESF - Atendimento Baseline vs Atendida Atendimento Modelo",
-                    "ESB - Atendimento Baseline vs Atendida Atendimento Modelo",
-                    "ESF - Diferença (Baseline - Modelo)",
-                    "ESB - Diferença (Baseline - Modelo)",
-                ),
-                vertical_spacing=0.12,
-                horizontal_spacing=0.1,
-            )
-
-            # Cores consistentes
-            cor_captada = "#4682B4"
-            cor_atendida = "#32CD32"
-            cor_deficit = "#DC143C"
-            cor_superavit = "#32CD32"
-
-            # --- GRÁFICO 1: ESF - Captada vs Atendida ---
-            fig.add_trace(
-                go.Bar(
-                    x=self.df_resultados_esf["Faixa"],
-                    y=self.df_resultados_esf["Pop_Captada"],
-                    name="Baseline",
-                    marker_color=cor_captada,
-                    text=self.df_resultados_esf["Pop_Captada"].apply(
-                        lambda x: f"{x:,.0f}"
-                    ),
-                    textposition="outside",
-                    legendgroup="captada",
-                    showlegend=True,
-                ),
-                row=1,
-                col=1,
-            )
-
-            fig.add_trace(
-                go.Bar(
-                    x=self.df_resultados_esf["Faixa"],
-                    y=self.df_resultados_esf["Pop_Atendida"],
-                    name="Modelo",
-                    marker_color=cor_atendida,
-                    text=self.df_resultados_esf["Pop_Atendida"].apply(
-                        lambda x: f"{x:,.0f}"
-                    ),
-                    textposition="outside",
-                    legendgroup="atendida",
-                    showlegend=True,
-                ),
-                row=1,
-                col=1,
-            )
-
-            # --- GRÁFICO 2: ESB - Captada vs Atendida ---
-            fig.add_trace(
-                go.Bar(
-                    x=self.df_resultados_esb["Faixa"],
-                    y=self.df_resultados_esb["Pop_Captada"],
-                    name="Baseline",
-                    marker_color=cor_captada,
-                    text=self.df_resultados_esb["Pop_Captada"].apply(
-                        lambda x: f"{x:,.0f}"
-                    ),
-                    textposition="outside",
-                    legendgroup="captada",
-                    showlegend=False,
-                ),
-                row=1,
-                col=2,
-            )
-
-            fig.add_trace(
-                go.Bar(
-                    x=self.df_resultados_esb["Faixa"],
-                    y=self.df_resultados_esb["Pop_Atendida"],
-                    name="Modelo",
-                    marker_color=cor_atendida,
-                    text=self.df_resultados_esb["Pop_Atendida"].apply(
-                        lambda x: f"{x:,.0f}"
-                    ),
-                    textposition="outside",
-                    legendgroup="atendida",
-                    showlegend=False,
-                ),
-                row=1,
-                col=2,
-            )
-
-            # --- GRÁFICO 3: ESF - Diferença ---
-            cores_diff_esf = [
-                cor_superavit if x >= 0 else cor_deficit
-                for x in self.df_resultados_esf["Diferenca"]
-            ]
-            fig.add_trace(
-                go.Bar(
-                    x=self.df_resultados_esf["Faixa"],
-                    y=self.df_resultados_esf["Diferenca"],
-                    name="Diferença",
-                    marker_color=cores_diff_esf,
-                    text=self.df_resultados_esf["Diferenca"].apply(
-                        lambda x: f"{x:+,.0f}"
-                    ),
-                    textposition="outside",
-                    showlegend=False,
-                ),
-                row=2,
-                col=1,
-            )
-
-            # Linha zero
-            fig.add_hline(
-                y=0, line_dash="dash", line_color="black", opacity=0.5, row=2, col=1
-            )
-
-            # --- GRÁFICO 4: ESB - Diferença ---
-            cores_diff_esb = [
-                cor_superavit if x >= 0 else cor_deficit
-                for x in self.df_resultados_esb["Diferenca"]
-            ]
-            fig.add_trace(
-                go.Bar(
-                    x=self.df_resultados_esb["Faixa"],
-                    y=self.df_resultados_esb["Diferenca"],
-                    name="Diferença",
-                    marker_color=cores_diff_esb,
-                    text=self.df_resultados_esb["Diferenca"].apply(
-                        lambda x: f"{x:+,.0f}"
-                    ),
-                    textposition="outside",
-                    showlegend=False,
-                ),
-                row=2,
-                col=2,
-            )
-
-            fig.add_hline(
-                y=0, line_dash="dash", line_color="black", opacity=0.5, row=2, col=2
-            )
-
-            # --- GRÁFICO 5: ESF - Percentual ---
-            # Atualizar layout
-            fig.update_xaxes(
-                title_text="Faixas de Ranking De Vulnerabilidade (1 = Mais Vulnerável)",
-                row=3,
-                col=1,
-            )
-            fig.update_xaxes(
-                title_text="Faixas de Ranking De Vulnerabilidade (1 = Mais Vulnerável)",
-                row=3,
-                col=2,
-            )
-
-            fig.update_yaxes(title_text="População", row=1, col=1)
-            fig.update_yaxes(title_text="População", row=1, col=2)
-            fig.update_yaxes(title_text="Diferença (pessoas)", row=2, col=1)
-            fig.update_yaxes(title_text="Diferença (pessoas)", row=2, col=2)
-            fig.update_yaxes(title_text="Percentual (%)", row=3, col=1)
-            fig.update_yaxes(title_text="Percentual (%)", row=3, col=2)
-
-            fig.update_layout(
-                height=1200,
-                width=1400,
-                title_text="Análise Comparativa: Baseline vs Atendimento Modelo por Faixas de Ranking de Viabilidade (TopSis)",
-                title_x=0.5,
-                showlegend=True,
-                legend=dict(
-                    orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5
-                ),
-                barmode="group",
-            )
-
-            # Resumo final
-            print("\n" + "=" * 80)
-            print("RESUMO COMPARATIVO GERAL")
-            print("=" * 80)
-
-            # Salvar os dados do resumo comparativo em um DataFrame
-            resumo_comparativo = []
-
-            for tipo_equipe in ["ESF", "ESB"]:
-                df_res = resultados_dict[tipo_equipe]
-                total_captada = sum([r["Pop_Captada"] for r in df_res])
-                total_atendida = sum([r["Pop_Atendida"] for r in df_res])
-                diff_total = total_atendida - total_captada
-                percentual = (
-                    (total_atendida / total_captada * 100) if total_captada > 0 else 0
                 )
 
-                print(f"\n{tipo_equipe}:")
-                print(f"  Total Captado: {total_captada:,.0f} pessoas")
-                print(f"  Total Atendido: {total_atendida:,.0f} pessoas")
-                print(f"  Diferença: {diff_total:+,.0f} ({percentual:.1f}%)")
+                resultados_dict[tipo_equipe].append(
+                    {
+                        "Faixa": f"{inicio_faixa}-{fim_faixa}",
+                        "Inicio_Faixa": inicio_faixa,
+                        "Fim_Faixa": fim_faixa,
+                        "Total_Setores": total_na_faixa,
+                        "Pop_Captada": pop_captada_total,
+                        "Pop_Atendida": pop_atendida_total,
+                        "Diferenca": diferenca,
+                        "Percentual_Atendimento": percentual_atendimento,
+                        "Setores_Com_Captacao": setores_com_captacao,
+                        "Setores_Com_Atendimento": setores_com_atendimento,
+                        "IVS_Medio": ivs_medio,
+                        "Nivel_Criticidade": nivel_criticidade,
+                    }
+                )
 
-                resumo_dados = {
-                    "Tipo_Equipe": tipo_equipe,
-                    "Total_Captado": total_captada,
-                    "Total_Atendido": total_atendida,
-                    "Diferenca_Total": diff_total,
-                    "Percentual_Atendido_sobre_Captado": percentual,
-                    "Top_Faixa_Captado": None,
-                    "Top_Faixa_Atendido": None,
-                    "Top_Faixa_Diferenca": None,
-                    "Faixa_Top": None,
-                }
+                print(f"Faixa {inicio_faixa}-{fim_faixa} ({nivel_criticidade}):")
+                print(
+                    f"  Pop Captada: {pop_captada_total:,.0f} | Pop Atendida: {pop_atendida_total:,.0f}"
+                )
+                print(f"  Diferença: {diferenca:+,.0f} ({percentual_atendimento:.1f}%)")
+                print(
+                    f"  Setores: {setores_com_atendimento}/{setores_com_captacao} com atendimento"
+                )
 
-                # Top mais vulneráveis
-                if len(df_res) > 0:
-                    top_capt = df_res[0]["Pop_Captada"]
-                    top_atend = df_res[0]["Pop_Atendida"]
-                    top_diff = top_atend - top_capt
-                    print(f"  Top {tamanho_faixa} mais vulneráveis:")
-                    print(
-                        f"    Captado: {top_capt:,.0f} | Atendido: {top_atend:,.0f} | "
-                        f"Diferença: {top_diff:+,.0f}"
-                    )
-                    resumo_dados.update(
-                        {
-                            "Top_Faixa_Captado": top_capt,
-                            "Top_Faixa_Atendido": top_atend,
-                            "Top_Faixa_Diferenca": top_diff,
-                            "Faixa_Top": tamanho_faixa,
-                        }
-                    )
-                resumo_comparativo.append(resumo_dados)
+        # Converter para DataFrames
+        self.df_resultados_esf = pd.DataFrame(resultados_dict["ESF"])
+        self.df_resultados_esb = pd.DataFrame(resultados_dict["ESB"])
 
-            self.df_resumo_comparativo_por_faixa = pd.DataFrame(resumo_comparativo)
+        # Criar subplots com Plotly
+        fig = make_subplots(
+            rows=3,
+            cols=2,
+            subplot_titles=(
+                "ESF - Atendimento Baseline vs Atendida Atendimento Modelo",
+                "ESB - Atendimento Baseline vs Atendida Atendimento Modelo",
+                "ESF - Diferença (Baseline - Modelo)",
+                "ESB - Diferença (Baseline - Modelo)",
+            ),
+            vertical_spacing=0.12,
+            horizontal_spacing=0.1,
+        )
 
-            # fig.show()
-            fig.write_html("comparacao_cobertura_custos_reais.html")
-            fig.write_image("comparacao_cobertura.png", width=1400, height=1200)
+        # Cores consistentes
+        cor_captada = "#4682B4"
+        cor_atendida = "#32CD32"
+        cor_deficit = "#DC143C"
+        cor_superavit = "#32CD32"
 
-            # return fig, {"ESF": df_resultados_esf, "ESB": df_resultados_esb}
+        # --- GRÁFICO 1: ESF - Captada vs Atendida ---
+        fig.add_trace(
+            go.Bar(
+                x=self.df_resultados_esf["Faixa"],
+                y=self.df_resultados_esf["Pop_Captada"],
+                name="Baseline",
+                marker_color=cor_captada,
+                text=self.df_resultados_esf["Pop_Captada"].apply(lambda x: f"{x:,.0f}"),
+                textposition="outside",
+                legendgroup="captada",
+                showlegend=True,
+            ),
+            row=1,
+            col=1,
+        )
 
-        def compara_fluxo_emulti(self):
-            # TODO: Implementar comparação de fluxo emulti
-            pass
+        fig.add_trace(
+            go.Bar(
+                x=self.df_resultados_esf["Faixa"],
+                y=self.df_resultados_esf["Pop_Atendida"],
+                name="Modelo",
+                marker_color=cor_atendida,
+                text=self.df_resultados_esf["Pop_Atendida"].apply(
+                    lambda x: f"{x:,.0f}"
+                ),
+                textposition="outside",
+                legendgroup="atendida",
+                showlegend=True,
+            ),
+            row=1,
+            col=1,
+        )
+
+        # --- GRÁFICO 2: ESB - Captada vs Atendida ---
+        fig.add_trace(
+            go.Bar(
+                x=self.df_resultados_esb["Faixa"],
+                y=self.df_resultados_esb["Pop_Captada"],
+                name="Baseline",
+                marker_color=cor_captada,
+                text=self.df_resultados_esb["Pop_Captada"].apply(lambda x: f"{x:,.0f}"),
+                textposition="outside",
+                legendgroup="captada",
+                showlegend=False,
+            ),
+            row=1,
+            col=2,
+        )
+
+        fig.add_trace(
+            go.Bar(
+                x=self.df_resultados_esb["Faixa"],
+                y=self.df_resultados_esb["Pop_Atendida"],
+                name="Modelo",
+                marker_color=cor_atendida,
+                text=self.df_resultados_esb["Pop_Atendida"].apply(
+                    lambda x: f"{x:,.0f}"
+                ),
+                textposition="outside",
+                legendgroup="atendida",
+                showlegend=False,
+            ),
+            row=1,
+            col=2,
+        )
+
+        # --- GRÁFICO 3: ESF - Diferença ---
+        cores_diff_esf = [
+            cor_superavit if x >= 0 else cor_deficit
+            for x in self.df_resultados_esf["Diferenca"]
+        ]
+        fig.add_trace(
+            go.Bar(
+                x=self.df_resultados_esf["Faixa"],
+                y=self.df_resultados_esf["Diferenca"],
+                name="Diferença",
+                marker_color=cores_diff_esf,
+                text=self.df_resultados_esf["Diferenca"].apply(lambda x: f"{x:+,.0f}"),
+                textposition="outside",
+                showlegend=False,
+            ),
+            row=2,
+            col=1,
+        )
+
+        # Linha zero
+        fig.add_hline(
+            y=0, line_dash="dash", line_color="black", opacity=0.5, row=2, col=1
+        )
+
+        # --- GRÁFICO 4: ESB - Diferença ---
+        cores_diff_esb = [
+            cor_superavit if x >= 0 else cor_deficit
+            for x in self.df_resultados_esb["Diferenca"]
+        ]
+        fig.add_trace(
+            go.Bar(
+                x=self.df_resultados_esb["Faixa"],
+                y=self.df_resultados_esb["Diferenca"],
+                name="Diferença",
+                marker_color=cores_diff_esb,
+                text=self.df_resultados_esb["Diferenca"].apply(lambda x: f"{x:+,.0f}"),
+                textposition="outside",
+                showlegend=False,
+            ),
+            row=2,
+            col=2,
+        )
+
+        fig.add_hline(
+            y=0, line_dash="dash", line_color="black", opacity=0.5, row=2, col=2
+        )
+
+        # --- GRÁFICO 5: ESF - Percentual ---
+        # Atualizar layout
+        fig.update_xaxes(
+            title_text="Faixas de Ranking De Vulnerabilidade (1 = Mais Vulnerável)",
+            row=3,
+            col=1,
+        )
+        fig.update_xaxes(
+            title_text="Faixas de Ranking De Vulnerabilidade (1 = Mais Vulnerável)",
+            row=3,
+            col=2,
+        )
+
+        fig.update_yaxes(title_text="População", row=1, col=1)
+        fig.update_yaxes(title_text="População", row=1, col=2)
+        fig.update_yaxes(title_text="Diferença (pessoas)", row=2, col=1)
+        fig.update_yaxes(title_text="Diferença (pessoas)", row=2, col=2)
+        fig.update_yaxes(title_text="Percentual (%)", row=3, col=1)
+        fig.update_yaxes(title_text="Percentual (%)", row=3, col=2)
+
+        fig.update_layout(
+            height=1200,
+            width=1400,
+            title_text="Análise Comparativa: Baseline vs Atendimento Modelo por Faixas de Ranking de Viabilidade (TopSis)",
+            title_x=0.5,
+            showlegend=True,
+            legend=dict(
+                orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5
+            ),
+            barmode="group",
+        )
+
+        # Resumo final
+        print("\n" + "=" * 80)
+        print("RESUMO COMPARATIVO GERAL")
+        print("=" * 80)
+
+        # Salvar os dados do resumo comparativo em um DataFrame
+        resumo_comparativo = []
+
+        for tipo_equipe in ["ESF", "ESB"]:
+            df_res = resultados_dict[tipo_equipe]
+            total_captada = sum([r["Pop_Captada"] for r in df_res])
+            total_atendida = sum([r["Pop_Atendida"] for r in df_res])
+            diff_total = total_atendida - total_captada
+            percentual = (
+                (total_atendida / total_captada * 100) if total_captada > 0 else 0
+            )
+
+            print(f"\n{tipo_equipe}:")
+            print(f"  Total Captado: {total_captada:,.0f} pessoas")
+            print(f"  Total Atendido: {total_atendida:,.0f} pessoas")
+            print(f"  Diferença: {diff_total:+,.0f} ({percentual:.1f}%)")
+
+            resumo_dados = {
+                "Tipo_Equipe": tipo_equipe,
+                "Total_Captado": total_captada,
+                "Total_Atendido": total_atendida,
+                "Diferenca_Total": diff_total,
+                "Percentual_Atendido_sobre_Captado": percentual,
+                "Top_Faixa_Captado": None,
+                "Top_Faixa_Atendido": None,
+                "Top_Faixa_Diferenca": None,
+                "Faixa_Top": None,
+            }
+
+            # Top mais vulneráveis
+            if len(df_res) > 0:
+                top_capt = df_res[0]["Pop_Captada"]
+                top_atend = df_res[0]["Pop_Atendida"]
+                top_diff = top_atend - top_capt
+                print(f"  Top {tamanho_faixa} mais vulneráveis:")
+                print(
+                    f"    Captado: {top_capt:,.0f} | Atendido: {top_atend:,.0f} | "
+                    f"Diferença: {top_diff:+,.0f}"
+                )
+                resumo_dados.update(
+                    {
+                        "Top_Faixa_Captado": top_capt,
+                        "Top_Faixa_Atendido": top_atend,
+                        "Top_Faixa_Diferenca": top_diff,
+                        "Faixa_Top": tamanho_faixa,
+                    }
+                )
+            resumo_comparativo.append(resumo_dados)
+
+        self.df_resumo_comparativo_por_faixa = pd.DataFrame(resumo_comparativo)
+
+        # fig.show()
+        fig.write_html("comparacao_cobertura_custos_reais.html")
+        fig.write_image("comparacao_cobertura.png", width=1400, height=1200)
+
+        # return fig, {"ESF": df_resultados_esf, "ESB": df_resultados_esb}
+
+    def compara_fluxo_emulti(self):
+        # TODO: Implementar comparação de fluxo emulti
+        pass
 
 
 def main():
-    path_cenario = r"C:\Users\marce\OneDrive\Área de Trabalho\MestradoHierarquico\Resultados_COBERTURA_MAXIMA_raio_1_5_KM_CUSTOS_FINAL_CAPACITADO_REST_CRIACAO.xlsx"
+    path_cenario = r"C:\Users\marce\OneDrive\Área de Trabalho\MestradoHierarquico\Resultados_COBERTURA_MAXIMA_raio_1.5_KM_CUSTOS_FINAL_CAPACITADO_REST_CRIACAO_v4.xlsx"
     # path_cenario = r"C:\Users\marce\OneDrive\Área de Trabalho\MestradoHierarquico\Resultados_COBERTURA_MAXIMA_raio_8_KM_CUSTOS_FINAL.xlsx"
     path_baseline = r"C:\Users\marce\OneDrive\Área de Trabalho\MestradoHierarquico\resultados_Baseline_DataSus_Cobertura_por_equipes_v2.xlsx"
     # analise_cen = AnaliseCenario(path_cenario=path_cenario)

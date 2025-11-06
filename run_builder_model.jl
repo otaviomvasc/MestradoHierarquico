@@ -1,4 +1,5 @@
-using JuMP, HiGHS, JLD2, XLSX, DataFrames, PrettyTables, Random, JSON
+using JuMP, HiGHS, JLD2, XLSX, DataFrames, PrettyTables, Random, JSON, Gurobi
+
 using Base: deepcopy 
 
 
@@ -19,7 +20,7 @@ function example_usage()
     mun_data = filter_municipality_data(data, municipio)
     
     #TODOs: Deixar mais facil a definicao dos rais criticos!
-    mun_data.constantes.raio_maximo_n1 = 8
+    mun_data.constantes.raio_maximo_n1 = 1.5
     #mun_data.constantes.raio_maximo_n2 = 20.0
     #mun_data.constantes.raio_maximo_n3 = 50.0
 
@@ -41,8 +42,8 @@ function example_usage()
 
     set_optimizer_attribute(model, "primal_feasibility_tolerance", 1e-4)
     set_optimizer_attribute(model, "dual_feasibility_tolerance", 1e-4)
-    set_optimizer_attribute(model, "time_limit", 3700.0)
-    set_optimizer_attribute(model, "mip_rel_gap", 0.001)
+    set_optimizer_attribute(model, "time_limit", 1000.0)
+    set_optimizer_attribute(model, "mip_rel_gap", 0.01)
 
     optimize!(model)
     
@@ -93,7 +94,7 @@ function example_usage()
 
         
        # Exportar para Excel
-        filename = "Resultados_COBERTURA_MAXIMA_raio_8_KM_CUSTOS_FINAL_CAPACITADO_REST_CRIACAO.xlsx"
+        filename = "Resultados_COBERTURA_MAXIMA_raio_1.5_KM_CUSTOS_FINAL_CAPACITADO_REST_CRIACAO_v4.xlsx"
         df_results = export_population_results_to_excel(population_results, filename)
         
         # Adicionar dados do fluxo de equipes (novo formato) ao mesmo arquivo Excel
