@@ -21,18 +21,21 @@ function example_usage()
     
     #TODOs: Deixar mais facil a definicao dos rais criticos!
     mun_data.constantes.raio_maximo_n1 = 1.5
+
     #mun_data.constantes.raio_maximo_n2 = 20.0
     #mun_data.constantes.raio_maximo_n3 = 50.0
 
     # Calcular parâmetros do modelo
     println("Calculando parâmetros do modelo...")
     indices, parameters = calculate_model_parameters(mun_data, data)
-    
+    parameters.raio_critico_eMulti = 3
     # Exporta o campo data.matrix_api para um arquivo JSON externo se ele existir
     
     # Configurar parâmetros específicos do cenário
     println("Configurando parâmetros do cenário...")
-    parameters.orcamento_maximo = 21591350
+    #parameters.orcamento_maximo = 21591350 
+    parameters.orcamento_maximo = 15500000
+    #parameters.orcamento_maximo = 100000000
     parameters.ponderador_Vulnerabilidade = 1
 
     println("Criando modelo de cobertura máxima")
@@ -40,12 +43,19 @@ function example_usage()
     #model = create_optimization_model_maximal_coverage_fluxo_equipes_ESF_e_ESB_ENASF_simplificado(indices, parameters, mun_data)
     println("Otimizando modelo...")
 
-    set_optimizer_attribute(model, "primal_feasibility_tolerance", 1e-4)
-    set_optimizer_attribute(model, "dual_feasibility_tolerance", 1e-4)
-    set_optimizer_attribute(model, "time_limit", 1000.0)
-    set_optimizer_attribute(model, "mip_rel_gap", 0.01)
-
+    #return model
+    # Tempo limite (em segundos)
+    set_optimizer_attribute(model, "TimeLimit", 3600.0)
+    set_optimizer_attribute(model, "MIPGap", 0.05)
+    # Gap absoluto (opcional)
+    set_optimizer_attribute(model, "MIPGapAbs", 1e-4)
+    # Tolerâncias de factibilidade
+    set_optimizer_attribute(model, "FeasibilityTol", 1e-6)  # primal
+    set_optimizer_attribute(model, "OptimalityTol", 1e-6)   # dual
+    set_optimizer_attribute(model, "OutputFlag", 1)  # 1 = mostrar, 0 = silenciar
+    set_optimizer_attribute(model, "Threads", 4) 
     optimize!(model)
+
     
     # Verificar se a otimização foi bem-sucedida
     if termination_status(model) == MOI.OPTIMAL
@@ -53,7 +63,10 @@ function example_usage()
         #Se modelo 1 finalizar rodada, gerar modelo que aloca Emulti nas ESF!
         println("Otimização concluída com sucesso!")
         println("Valor da função objetivo: ", objective_value(model))
-
+        pop_atendida_values = value.(model[:pop_atendida])
+        total_populacao_atendida = sum(values(pop_atendida_values))
+        value(model[:custo_total])
+        println("Soma total das populacoes atendidas: ", total_populacao_atendida/2)
         
         # Extrair resultados da população atendida
         println("\nExtraindo resultados da população atendida...")
@@ -70,31 +83,12 @@ function example_usage()
         # Extrair resultados dos custos
         println("\nExtraindo resultados dos custos...")
         cost_results = extract_cost_results(model)
-    
 
-
-        println("Criando Modelo Alocacao EsF nas Emultis ...")
-        model_emulti, indices_model_emulti = create_model_alocacao_Emulti_ESF(model, indices, parameters, mun_data)
-        
-        println("Otimizando modelo Emulti...")
-        set_optimizer_attribute(model, "primal_feasibility_tolerance", 1e-4)
-        set_optimizer_attribute(model, "dual_feasibility_tolerance", 1e-4)
-        set_optimizer_attribute(model, "time_limit", 300.0)
-        set_optimizer_attribute(model, "mip_rel_gap", 0.05)
-    
-        optimize!(model_emulti)
-
-        aloc_esf_emulti_df = nothing
-        if termination_status(model_emulti) == MOI.OPTIMAL
-            println("Modelo De alocacao Emulti Finalizado com sucesso")
-            println("Extraindo Resultados da Alocacao Emulti")
-            aloc_esf_emulti_df = extract_aloc_esf_emulti(model_emulti, indices_model_emulti, indices, mun_data)
-        
-        end
-
+        println("\nExtraindo Alocacao ubs enasf")
+        alocacao_ubs_emulti = extract_aloc_ubs_enasf(model, indices, parameters, mun_data)
         
        # Exportar para Excel
-        filename = "Resultados_COBERTURA_MAXIMA_raio_1.5_KM_CUSTOS_FINAL_CAPACITADO_REST_CRIACAO_v4.xlsx"
+        filename = "Resultados_COBERTURA_MAXIMA_raio_1.5_KM_GUROBI_ORCAMENTO_PESSIMISTA_milhoes_GAP_1.xlsx"
         df_results = export_population_results_to_excel(population_results, filename)
         
         # Adicionar dados do fluxo de equipes (novo formato) ao mesmo arquivo Excel
@@ -108,11 +102,9 @@ function example_usage()
         
         # Adicionar fluxo secundario e terciario()
         df_flow = add_flow_patientes_to_excel(fluxo_secundario_terciario, filename)
-        # Adicionar alocação ESF→Emulti
-        if aloc_esf_emulti_df !== nothing
-            df_aloc_esf_emulti = add_aloc_esf_emulti_to_excel(aloc_esf_emulti_df, filename)
-        end
 
+        df_aloc_ubs_emulti = add_alocacao_ubs_emulti(alocacao_ubs_emulti, filename)
+        # Adicionar alocação ESF→Emulti
 
         return model, results, population_results, team_flow_results, cost_results
     

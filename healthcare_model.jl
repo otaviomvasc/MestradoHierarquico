@@ -131,6 +131,7 @@ mutable struct ModelParameters
     orcamento_maximo::Float64
     ponderador_Vulnerabilidade::Float64
     S_capacidade_unidades_primarias::Vector{Int64}
+    raio_critico_eMulti::Int64
 end
 
 

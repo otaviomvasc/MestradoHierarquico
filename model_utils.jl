@@ -611,15 +611,25 @@ function calculate_domains(mun_data::MunicipalityData, data::HealthcareData, S_M
     dominio_fixa_inst_reais_n1, dominio_fixa_inst_reais_n2, dominio_fixa_inst_reais_n3 = calculate_domain_fix_instalacoes_reais(indices::ModelIndices)
 
     if reduz_instalacoes_candidatas == true
-
-        cs_atendidos_somente_candidatos = [d for d in keys(dominio_atr_n1) if length([k for k in dominio_atr_n1[d] if k in indices.S_instalacoes_reais_n1]) == 0]
+        #O que eu preciso: Considerar locais candidatos somente instalacoes com menos de 1 local real candidato.
+        #Depois,  dentre os locais candidatos no dominio, pegar os cinco mais proximos. 
+        cs_atendidos_somente_candidatos = [d for d in keys(dominio_atr_n1) if length([k for k in dominio_atr_n1[d] if k in indices.S_instalacoes_reais_n1]) <= 2]
         candidatos_n1_necessarios = []
+
         for cs in cs_atendidos_somente_candidatos
-            candidatos_n1_necessarios = vcat(candidatos_n1_necessarios, dominio_atr_n1[cs] )
-            println(length(candidatos_n1_necessarios))
+            if length(dominio_atr_n1[cs]) <= 5
+                candidatos_n1_necessarios = vcat(candidatos_n1_necessarios, dominio_atr_n1[cs] )
+            end
+
+                # Ordena os elementos do dominio_atr_n1[cs] pelos com menor distância e pega os 5 mais próximos
+            candidatos_ordenados = sort(dominio_atr_n1[cs], by = el -> S_Matriz_Dist.Matriz_Dist_n1[cs, el])
+            candidatos_mais_proximos = candidatos_ordenados[1:min(5, length(candidatos_ordenados))]
+            candidatos_n1_necessarios = vcat(candidatos_n1_necessarios, candidatos_mais_proximos )
+                #println(length(candidatos_n1_necessarios))
         end
 
-        indices.S_Locais_Candidatos_n1 = unique(candidatos_n1_necessarios)
+        println(length(unique([i for i in candidatos_n1_necessarios if i ∉ indices.S_instalacoes_reais_n1])))
+        indices.S_Locais_Candidatos_n1 = unique([i for i in candidatos_n1_necessarios if i ∉ indices.S_instalacoes_reais_n1])
         indices.S_n1 = vcat(indices.S_instalacoes_reais_n1, indices.S_Locais_Candidatos_n1)
 
         cs_atendidos_somente_candidatos_n2 = [d for d in keys(dominio_atr_n2) if length([ k for k in dominio_atr_n2[d] if k in indices.S_instalacoes_reais_n2]) == 0]
@@ -644,7 +654,8 @@ function calculate_domains(mun_data::MunicipalityData, data::HealthcareData, S_M
 
 
         dominio_atr_n1, dominio_atr_n2, dominio_atr_n3 = calculate_flow_patients_domain(mun_data::MunicipalityData, data::HealthcareData, S_Matriz_Dist::Matriz_Dist, indices::ModelIndices)
-
+        
+        dominio_atr_n1[429]
 
         #[k for k in keys(dominio_atr_n3) if length(dominio_atr_n3[k]) == 0]
     end
@@ -678,6 +689,8 @@ function create_model_parameters(mun_data::MunicipalityData, data::HealthcareDat
     matriz_cap_n1, matriz_cap_n2, matriz_cap_n3 = calculate_equipment_parameters(mun_data, data)
     IVS = mun_data.IVS
     capacidade = [row.total_equipes for row in eachrow(mun_data.unidades_n1)]
+    raio_critico_emulti = 5
+
 
     return ModelParameters(
         capacidade_n1,
@@ -694,7 +707,8 @@ function create_model_parameters(mun_data::MunicipalityData, data::HealthcareDat
         IVS,
         3000000.0,  # orcamento_maximo - valor padrão
         10.0 ,
-        capacidade       # ponderador_Vulnerabilidade - valor padrão
+        capacidade,
+        raio_critico_emulti       # ponderador_Vulnerabilidade - valor padrão
     )
 end
 
